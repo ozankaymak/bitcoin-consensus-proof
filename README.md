@@ -17,13 +17,10 @@ While the initial focus proving Bitcoin related operations using Risc0 zkVM, the
 - **Optimizing Proof Performance:** Improving the efficiency and speed of proof generation and verification.
 
 ## Getting Started
+- First, install `Risc0` toolchain. You can refer to [here](https://dev.risczero.com/api/zkvm/install).
 - TBD
 
 ### Usage
-Start by running the example circuits included in the project:
-
-```bash
-cargo run --example transaction_proof
-```
+- TBD
 
 

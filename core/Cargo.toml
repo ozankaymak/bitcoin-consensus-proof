@@ -17,7 +17,8 @@ crypto-bigint.workspace = true
 serde_json.workspace = true
 num-bigint.workspace = true
 num-traits.workspace = true
+bitcoin = "0.32.5"
+serde = { version = "1.0", default-features = false }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
-bitcoin = "0.32.5"

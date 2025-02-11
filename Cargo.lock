@@ -580,6 +580,7 @@ dependencies = [
  "risc0-groth16",
  "risc0-zkp",
  "risc0-zkvm",
+ "serde",
  "serde_json",
  "sha2",
 ]

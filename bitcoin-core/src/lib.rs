@@ -4,10 +4,10 @@ use header_chain::NETWORK_CONSTANTS;
 use serde::{Deserialize, Serialize};
 use zkvm::ZkvmGuest;
 
+pub mod bitcoin_merkle;
 pub mod block;
 pub mod hashes;
 pub mod header_chain;
-pub mod merkle_tree;
 pub mod transaction;
 pub mod zkvm;
 
@@ -57,7 +57,7 @@ impl BitcoinState {
         }
     }
     pub fn verify_and_apply_blocks(&mut self, blocks: Vec<CircuitBlock>) {
-        for block in blocks {
+        for _block in blocks {
             todo!();
         }
     }

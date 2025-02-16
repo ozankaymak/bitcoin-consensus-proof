@@ -38,14 +38,14 @@ impl CircuitBlock {
 
 impl BorshSerialize for CircuitBlock {
     #[inline]
-    fn serialize<W: borsh::io::Write>(&self, writer: &mut W) -> borsh::io::Result<()> {
+    fn serialize<W: borsh::io::Write>(&self, _writer: &mut W) -> borsh::io::Result<()> {
         unimplemented!()
     }
 }
 
 impl BorshDeserialize for CircuitBlock {
     #[inline]
-    fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> borsh::io::Result<Self> {
+    fn deserialize_reader<R: borsh::io::Read>(_reader: &mut R) -> borsh::io::Result<Self> {
         unimplemented!()
     }
 }

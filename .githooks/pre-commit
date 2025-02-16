@@ -1,0 +1,46 @@
+#!/bin/bash
+
+# Allow skipping pre-commit checks
+if [[ "$SKIP_CHECKS" == "true" ]]; then
+  echo "Skipping pre-commit checks."
+  exit 0
+fi
+
+FAILED=0
+
+# Run cargo fmt to check code formatting
+echo "Running cargo fmt..."
+if ! cargo fmt -- --check; then
+  echo "Error: Code is not formatted. Please run 'cargo fmt' and try again."
+  FAILED=1
+fi
+
+# Run cargo check to ensure the code compiles
+echo "Running cargo check..."
+if ! cargo check; then
+  echo "Error: Compilation failed. Please fix the issues and try again."
+  FAILED=1
+fi
+
+# # Run cargo clippy to check for warnings (treat warnings as errors)
+# echo "Running cargo clippy..."
+# if ! cargo clippy -- -D warnings; then
+#   echo "Error: Clippy found warnings or errors. Please fix them and try again."
+#   FAILED=1
+# fi
+
+# # Run cargo test --release to ensure all tests pass
+# echo "Running cargo test --release..."
+# if ! cargo test --release; then
+#   echo "Error: Tests failed. Please fix the issues and try again."
+#   FAILED=1
+# fi
+
+# Check if any of the checks failed
+if [ $FAILED -ne 0 ]; then
+  echo "Pre-commit checks failed. Please address the issues and try again."
+  exit 1
+fi
+
+echo "All checks passed. Proceeding with commit."
+exit 0

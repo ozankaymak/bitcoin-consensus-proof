@@ -117,12 +117,12 @@ pub struct CircuitBlockHeader {
 impl CircuitBlockHeader {
     pub fn compute_block_hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        hasher.update(&self.version.to_le_bytes());
-        hasher.update(&self.prev_block_hash);
-        hasher.update(&self.merkle_root);
-        hasher.update(&self.time.to_le_bytes());
-        hasher.update(&self.bits.to_le_bytes());
-        hasher.update(&self.nonce.to_le_bytes());
+        hasher.update(self.version.to_le_bytes());
+        hasher.update(self.prev_block_hash);
+        hasher.update(self.merkle_root);
+        hasher.update(self.time.to_le_bytes());
+        hasher.update(self.bits.to_le_bytes());
+        hasher.update(self.nonce.to_le_bytes());
         let first_hash_result = hasher.finalize_reset();
 
         hasher.update(first_hash_result);

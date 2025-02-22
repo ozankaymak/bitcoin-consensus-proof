@@ -12,17 +12,13 @@ pub struct BitcoinMerkleTree {
 }
 
 impl BitcoinMerkleTree {
-    pub fn new(transactions: Vec<[u8; 32]>) -> Self {
-        if transactions.len() == 1 {
+    pub fn new(txids: Vec<[u8; 32]>) -> Self {
+        if txids.len() == 1 {
             // root is the coinbase txid
-            return BitcoinMerkleTree {
-                nodes: vec![transactions],
-            };
+            return BitcoinMerkleTree { nodes: vec![txids] };
         }
 
-        let mut tree = BitcoinMerkleTree {
-            nodes: vec![transactions],
-        };
+        let mut tree = BitcoinMerkleTree { nodes: vec![txids] };
 
         // Construct the tree
         let mut curr_level_offset: usize = 1;
@@ -95,6 +91,11 @@ impl BitcoinMerkleTree {
         inclusion_proof: BlockInclusionProof,
     ) -> [u8; 32] {
         inclusion_proof.get_root(txid)
+    }
+    // TODO: Make it so that it only generates the root with less memory.
+    pub fn generate_root(txids: Vec<[u8; 32]>) -> [u8; 32] {
+        let merkle_tree = BitcoinMerkleTree::new(txids);
+        merkle_tree.root()
     }
 }
 

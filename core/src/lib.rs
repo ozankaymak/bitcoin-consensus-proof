@@ -1,6 +1,6 @@
 use block::CircuitBlock;
 use borsh::{BorshDeserialize, BorshSerialize};
-use header_chain::NETWORK_CONSTANTS;
+use header_chain::HeaderChainState;
 use serde::{Deserialize, Serialize};
 use zkvm::ZkvmGuest;
 
@@ -35,30 +35,22 @@ pub struct BitcoinConsensusCircuitOutput {
 // TODO: Add the BitcoinState struct definition here.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct BitcoinState {
-    pub block_height: u32,
-    pub total_work: [u8; 32],
-    pub best_block_hash: [u8; 32],
-    pub current_target_bits: u32,
-    pub epoch_start_time: u32,
-    pub prev_11_timestamps: [u32; 11],
+    pub header_chain_state: header_chain::HeaderChainState,
     pub utxo_set_commitment: [u8; 32], // TODO: Change this in the future.
 }
 
 impl BitcoinState {
     pub fn new() -> Self {
         BitcoinState {
-            block_height: u32::MAX,
-            total_work: [0u8; 32],
-            best_block_hash: [0u8; 32],
-            current_target_bits: NETWORK_CONSTANTS.max_bits,
-            epoch_start_time: 0,
-            prev_11_timestamps: [0u32; 11],
+            header_chain_state: HeaderChainState::new(),
             utxo_set_commitment: [0u8; 32],
         }
     }
+
     pub fn verify_and_apply_blocks(&mut self, blocks: Vec<CircuitBlock>) {
-        for _block in blocks {
-            todo!();
+        for block in blocks {
+            self.header_chain_state
+                .verify_and_apply_header(block.block_header);
         }
     }
 }

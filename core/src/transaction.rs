@@ -46,6 +46,8 @@ impl CircuitTransaction {
             .consensus_encode(&mut tx_bytes_vec)
             .unwrap();
         calculate_double_sha256(&tx_bytes_vec)
+
+        // TODO: Add wtxid and (optional) ntxid
     }
 }
 

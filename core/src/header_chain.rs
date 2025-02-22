@@ -163,7 +163,7 @@ impl Into<Header> for CircuitBlockHeader {
 }
 
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
-pub struct ChainState {
+pub struct HeaderChainState {
     pub block_height: u32,
     pub total_work: [u8; 32],
     pub best_block_hash: [u8; 32],
@@ -172,9 +172,9 @@ pub struct ChainState {
     pub prev_11_timestamps: [u32; 11],
 }
 
-impl ChainState {
+impl HeaderChainState {
     pub fn new() -> Self {
-        ChainState {
+        HeaderChainState {
             block_height: u32::MAX,
             total_work: [0u8; 32],
             best_block_hash: [0u8; 32],
@@ -184,7 +184,7 @@ impl ChainState {
         }
     }
 
-    pub fn apply_blocks(&mut self, block_headers: Vec<CircuitBlockHeader>) {
+    pub fn verify_and_apply_header(&mut self, block_header: CircuitBlockHeader) {
         let mut current_target_bytes = if IS_REGTEST {
             NETWORK_CONSTANTS.max_target.to_be_bytes()
         } else {
@@ -202,30 +202,22 @@ impl ChainState {
             0
         };
 
-        for block_header in block_headers {
-            self.block_height = self.block_height.wrapping_add(1);
+        self.block_height = self.block_height.wrapping_add(1);
 
-            let (target_to_use, expected_bits, work_to_add) = if IS_TESTNET4 {
-                if block_header.time > last_block_time + 1200 {
-                    // If the block is an epoch block, then it still has to have the real target.
-                    if self.block_height % BLOCKS_PER_EPOCH == 0 {
-                        (
-                            current_target_bytes,
-                            self.current_target_bits,
-                            calculate_work(&current_target_bytes),
-                        )
-                    } else {
-                        (
-                            NETWORK_CONSTANTS.max_target_bytes,
-                            NETWORK_CONSTANTS.max_bits,
-                            MINIMUM_WORK_TESTNET,
-                        )
-                    }
-                } else {
+        let (target_to_use, expected_bits, work_to_add) = if IS_TESTNET4 {
+            if block_header.time > last_block_time + 1200 {
+                // If the block is an epoch block, then it still has to have the real target.
+                if self.block_height % BLOCKS_PER_EPOCH == 0 {
                     (
                         current_target_bytes,
                         self.current_target_bits,
                         calculate_work(&current_target_bytes),
+                    )
+                } else {
+                    (
+                        NETWORK_CONSTANTS.max_target_bytes,
+                        NETWORK_CONSTANTS.max_bits,
+                        MINIMUM_WORK_TESTNET,
                     )
                 }
             } else {
@@ -234,45 +226,51 @@ impl ChainState {
                     self.current_target_bits,
                     calculate_work(&current_target_bytes),
                 )
-            };
-
-            let new_block_hash = block_header.compute_block_hash();
-
-            assert_eq!(block_header.prev_block_hash, self.best_block_hash);
-
-            if IS_REGTEST {
-                assert_eq!(block_header.bits, NETWORK_CONSTANTS.max_bits);
-            } else {
-                assert_eq!(block_header.bits, expected_bits);
             }
+        } else {
+            (
+                current_target_bytes,
+                self.current_target_bits,
+                calculate_work(&current_target_bytes),
+            )
+        };
 
-            check_hash_valid(&new_block_hash, &target_to_use);
+        let new_block_hash = block_header.compute_block_hash();
 
-            if !validate_timestamp(block_header.time, self.prev_11_timestamps) {
-                panic!("Timestamp is not valid");
-            }
+        assert_eq!(block_header.prev_block_hash, self.best_block_hash);
 
-            self.best_block_hash = new_block_hash;
-            current_work = current_work.wrapping_add(&work_to_add);
+        if IS_REGTEST {
+            assert_eq!(block_header.bits, NETWORK_CONSTANTS.max_bits);
+        } else {
+            assert_eq!(block_header.bits, expected_bits);
+        }
 
-            if !IS_REGTEST && self.block_height % BLOCKS_PER_EPOCH == 0 {
-                self.epoch_start_time = block_header.time;
-            }
+        check_hash_valid(&new_block_hash, &target_to_use);
 
-            self.prev_11_timestamps[self.block_height as usize % 11] = block_header.time;
+        if !validate_timestamp(block_header.time, self.prev_11_timestamps) {
+            panic!("Timestamp is not valid");
+        }
 
-            if IS_TESTNET4 {
-                last_block_time = block_header.time;
-            }
+        self.best_block_hash = new_block_hash;
+        current_work = current_work.wrapping_add(&work_to_add);
 
-            if !IS_REGTEST && self.block_height % BLOCKS_PER_EPOCH == BLOCKS_PER_EPOCH - 1 {
-                current_target_bytes = calculate_new_difficulty(
-                    self.epoch_start_time,
-                    block_header.time,
-                    self.current_target_bits,
-                );
-                self.current_target_bits = target_to_bits(&current_target_bytes);
-            }
+        if !IS_REGTEST && self.block_height % BLOCKS_PER_EPOCH == 0 {
+            self.epoch_start_time = block_header.time;
+        }
+
+        self.prev_11_timestamps[self.block_height as usize % 11] = block_header.time;
+
+        if IS_TESTNET4 {
+            last_block_time = block_header.time;
+        }
+
+        if !IS_REGTEST && self.block_height % BLOCKS_PER_EPOCH == BLOCKS_PER_EPOCH - 1 {
+            current_target_bytes = calculate_new_difficulty(
+                self.epoch_start_time,
+                block_header.time,
+                self.current_target_bits,
+            );
+            self.current_target_bits = target_to_bits(&current_target_bytes);
         }
 
         self.total_work = current_work.to_be_bytes();
@@ -359,7 +357,7 @@ fn calculate_work(target: &[u8; 32]) -> U256 {
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct BlockHeaderCircuitOutput {
     pub method_id: [u32; 8],
-    pub chain_state: ChainState,
+    pub chain_state: HeaderChainState,
 }
 
 /// The input proof of the header chain circuit.

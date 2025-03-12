@@ -14,87 +14,7 @@ use crypto_bigint::{Encoding, U256};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Network configuration holder for Bitcoin-specific constants
-#[derive(Debug)]
-pub struct NetworkConstants {
-    pub max_bits: u32,
-    pub max_target: U256,
-    pub max_target_bytes: [u8; 32],
-}
-
-pub const NETWORK_TYPE: &str = {
-    match option_env!("BITCOIN_NETWORK") {
-        Some(network) if matches!(network.as_bytes(), b"mainnet") => "mainnet",
-        Some(network) if matches!(network.as_bytes(), b"testnet4") => "testnet4",
-        Some(network) if matches!(network.as_bytes(), b"signet") => "signet",
-        Some(network) if matches!(network.as_bytes(), b"regtest") => "regtest",
-        None => "mainnet",
-        _ => panic!("Invalid network type"),
-    }
-};
-
-// Const evaluation of network type from environment
-const IS_REGTEST: bool = matches!(NETWORK_TYPE.as_bytes(), b"regtest");
-const IS_TESTNET4: bool = matches!(NETWORK_TYPE.as_bytes(), b"testnet4");
-const MINIMUM_WORK_TESTNET: U256 =
-    U256::from_be_hex("0000000000000000000000000000000000000000000000000000000100010001");
-
-pub const NETWORK_CONSTANTS: NetworkConstants = {
-    match option_env!("BITCOIN_NETWORK") {
-        Some(n) if matches!(n.as_bytes(), b"signet") => NetworkConstants {
-            max_bits: 0x1E0377AE,
-            max_target: U256::from_be_hex(
-                "00000377AE000000000000000000000000000000000000000000000000000000",
-            ),
-            max_target_bytes: [
-                0, 0, 3, 119, 174, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0,
-            ],
-        },
-        Some(n) if matches!(n.as_bytes(), b"regtest") => NetworkConstants {
-            max_bits: 0x207FFFFF,
-            max_target: U256::from_be_hex(
-                "7FFFFF0000000000000000000000000000000000000000000000000000000000",
-            ),
-            max_target_bytes: [
-                127, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0,
-            ],
-        },
-        Some(n) if matches!(n.as_bytes(), b"testnet4") => NetworkConstants {
-            max_bits: 0x1D00FFFF,
-            max_target: U256::from_be_hex(
-                "00000000FFFF0000000000000000000000000000000000000000000000000000",
-            ),
-            max_target_bytes: [
-                0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0,
-            ],
-        },
-        Some(n) if matches!(n.as_bytes(), b"mainnet") => NetworkConstants {
-            max_bits: 0x1D00FFFF,
-            max_target: U256::from_be_hex(
-                "00000000FFFF0000000000000000000000000000000000000000000000000000",
-            ),
-            max_target_bytes: [
-                0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0,
-            ],
-        },
-        // Default to mainnet for None
-        None => NetworkConstants {
-            max_bits: 0x1D00FFFF,
-            max_target: U256::from_be_hex(
-                "00000000FFFF0000000000000000000000000000000000000000000000000000",
-            ),
-            max_target_bytes: [
-                0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0,
-            ],
-        },
-        _ => panic!("Unsupported network"),
-    }
-};
+use crate::params::{IS_REGTEST, IS_TESTNET4, MINIMUM_WORK_TESTNET4, NETWORK_PARAMS};
 
 /// An epoch should be two weeks (represented as number of seconds)
 /// seconds/minute * minutes/hour * hours/day * 14 days
@@ -178,15 +98,15 @@ impl HeaderChainState {
             block_height: u32::MAX,
             total_work: [0u8; 32],
             best_block_hash: [0u8; 32],
-            current_target_bits: NETWORK_CONSTANTS.max_bits,
+            current_target_bits: NETWORK_PARAMS.max_bits,
             epoch_start_time: 0,
             prev_11_timestamps: [0u32; 11],
         }
     }
 
-    pub fn verify_and_apply_header(&mut self, block_header: CircuitBlockHeader) {
+    pub fn verify_and_apply_header(&mut self, block_header: &CircuitBlockHeader) {
         let mut current_target_bytes = if IS_REGTEST {
-            NETWORK_CONSTANTS.max_target.to_be_bytes()
+            NETWORK_PARAMS.max_target.to_be_bytes()
         } else {
             bits_to_target(self.current_target_bits)
         };
@@ -215,9 +135,9 @@ impl HeaderChainState {
                     )
                 } else {
                     (
-                        NETWORK_CONSTANTS.max_target_bytes,
-                        NETWORK_CONSTANTS.max_bits,
-                        MINIMUM_WORK_TESTNET,
+                        NETWORK_PARAMS.max_target_bytes,
+                        NETWORK_PARAMS.max_bits,
+                        MINIMUM_WORK_TESTNET4,
                     )
                 }
             } else {
@@ -240,7 +160,7 @@ impl HeaderChainState {
         assert_eq!(block_header.prev_block_hash, self.best_block_hash);
 
         if IS_REGTEST {
-            assert_eq!(block_header.bits, NETWORK_CONSTANTS.max_bits);
+            assert_eq!(block_header.bits, NETWORK_PARAMS.max_bits);
         } else {
             assert_eq!(block_header.bits, expected_bits);
         }
@@ -330,8 +250,8 @@ fn calculate_new_difficulty(
         .wrapping_mul(&U256::from(actual_timespan))
         .wrapping_div(&U256::from(EXPECTED_EPOCH_TIMESPAN));
 
-    if new_target > NETWORK_CONSTANTS.max_target {
-        new_target = NETWORK_CONSTANTS.max_target;
+    if new_target > NETWORK_PARAMS.max_target {
+        new_target = NETWORK_PARAMS.max_target;
     }
     new_target.to_be_bytes()
 }

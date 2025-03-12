@@ -1,8 +1,9 @@
-use std::ops::{Deref, DerefMut};
-
 /// Code is taken from Citrea
 /// https://github.com/chainwayxyz/citrea/blob/0acb887b1a766fac1a482a68c6d51ecf9661f538/crates/bitcoin-da/src/spec/transaction.rs
 ///
+///
+
+use std::ops::{Deref, DerefMut};
 use bitcoin::absolute::LockTime;
 use bitcoin::consensus::Encodable;
 use bitcoin::hashes::Hash;
@@ -11,6 +12,7 @@ use bitcoin::{Amount, OutPoint, ScriptBuf, Sequence, Transaction, TxIn, TxOut, W
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
+use crate::constants::{SEGWIT_FLAG, SEGWIT_MARKER};
 use crate::hashes::calculate_double_sha256;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Hash)]
@@ -46,9 +48,110 @@ impl CircuitTransaction {
             .consensus_encode(&mut tx_bytes_vec)
             .unwrap();
         calculate_double_sha256(&tx_bytes_vec)
-
-        // TODO: Add wtxid and (optional) ntxid
     }
+
+    /// Returns the witness-transaction id, in big-endian byte order. One must be careful when dealing with
+    /// Bitcoin transaction ids, as they are little-endian in the Bitcoin protocol.
+    /// the witness-transaction id of the coinbase transaction is assumed to be "0x0000000000000000000000000000000000000000000000000000000000000000"
+    pub fn wtxid(&self) -> [u8; 32] {
+        if self.is_coinbase() {
+            return [0; 32];
+        }
+        let mut tx_bytes_vec = vec![];
+        self.inner()
+            .version
+            .consensus_encode(&mut tx_bytes_vec)
+            .unwrap();
+        // If at least one witness is nonempty, then it is a segwit tx
+        // Otherwise, it is a legacy tx
+        if self.is_segwit() {
+            tx_bytes_vec.push(SEGWIT_MARKER);
+            tx_bytes_vec.push(SEGWIT_FLAG);
+        }
+        self.inner()
+            .input
+            .consensus_encode(&mut tx_bytes_vec)
+            .unwrap();
+        self.inner()
+            .output
+            .consensus_encode(&mut tx_bytes_vec)
+            .unwrap();
+        if self.is_segwit() {
+            for input in &self.inner().input {
+                input.witness.consensus_encode(&mut tx_bytes_vec).unwrap();
+            }
+        }
+        self.inner()
+            .lock_time
+            .consensus_encode(&mut tx_bytes_vec)
+            .unwrap();
+        println!("{:?}", tx_bytes_vec);
+        calculate_double_sha256(&tx_bytes_vec)
+    }
+
+    pub fn is_segwit(&self) -> bool {
+        self.inner().input.iter().any(|input| !input.witness.is_empty())
+    }
+
+    // /// This is not to validate, just to check if the transaction is a candidate coinbase transaction
+    // pub fn is_coinbase(&self) -> bool {
+    //     self.inner().input.len() == 1
+    //         && self.inner().input[0].previous_output.is_null()
+    //         // is_null() means
+    //         // self.inner().input[0].previous_output.txid == bitcoin::Txid::from_byte_array([0; 32])
+    //         // && self.inner().input[0].previous_output.vout == 0xFFFFFFFF
+    // }
+
+    // /// This is for the coinbase transaction only
+    // pub fn get_claimed_block_reward(&self) -> Amount {
+    //     let mut reward = Amount::from_sat(0);
+    //     for output in &self.output {
+    //         reward += output.value;
+    //     }
+    //     reward
+        
+    // }
+
+    // /// This is for the coinbase transaction only
+    // pub fn get_bip34_block_height(&self) -> u32 {
+    //     // Extract and verify block height from coinbase script
+    //     let coinbase_script = &self.input[0].script_sig.as_bytes();
+    //     assert!(!coinbase_script.is_empty(), "Coinbase script cannot be empty");
+        
+    //     // First byte must be length of height serialization
+    //     let height_len = coinbase_script[0] as usize;
+    //     assert!(height_len >= 1 && height_len <= 5, "Invalid height length in coinbase");
+    //     assert!(coinbase_script.len() > height_len, "Coinbase script too short");
+
+    //     // Extract the height bytes
+    //     let height_bytes = &coinbase_script[1..=height_len];
+    //     let mut height_value = 0u32;
+        
+    //     // Parse little-endian encoded height
+    //     for (i, &byte) in height_bytes.iter().enumerate() {
+    //         height_value |= (byte as u32) << (8 * i);
+    //     }
+        
+    //     // assert_eq!(height_value, block_height, "Block height mismatch in coinbase script");
+    //     height_value
+    // }
+    
+    // /// This is for the coinbase transaction only
+    // pub fn get_witness_commitment_hash(&self) -> [u8; 32] {
+    //     if !self.is_coinbase() {
+    //         panic!("Only coinbase transactions can have a witness commitment hash");
+    //     }
+    //     for output in &self.output {
+    //         if output.script_pubkey.is_op_return() {
+    //             if output.script_pubkey.len() < 38 {
+    //                 panic!("Witness commitment hash is too short");
+    //             }
+    //             assert_eq!(MAGIC_BYTES, output.script_pubkey.as_bytes()[2..6], "Invalid magic bytes (witness commitment prefix)");
+    //             return output.script_pubkey.as_bytes()[6..38].try_into().unwrap();
+    //         }
+    //     }
+    //     panic!("No witness commitment hash found in coinbase transaction"); // TODO: Some blocks do not have a witness commitment hash, so this should be handled more gracefully
+    // }
 }
 
 impl BorshSerialize for CircuitTransaction {
@@ -181,6 +284,39 @@ mod tests {
         assert_eq!(
             hex::encode(txid),
             "a6a150fcdbabaf26040f4dea78ff53d794da2807d8600ead4758b065c5339324"
+        );
+    }
+
+    #[test]
+    fn test_wtxid_legacy() {
+        let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("0100000001c997a5e56e104102fa209c6a852dd90660a20b2d9c352423edce25857fcd3704000000004847304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901ffffffff0200ca9a3b00000000434104ae1a62fe09c5f51b13905f07f06b99a2f7159b2225f374cd378d71302fa28414e7aab37397f554a7df5f142c21c1b7303b8a0626f1baded5c72a704f7e6cd84cac00286bee0000000043410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac00000000").unwrap()).unwrap());
+        let wtxid = tx.wtxid();
+        let bitcoin_wtxid: [u8; 32] = tx.0.compute_wtxid().to_byte_array();
+        assert_eq!(
+            wtxid,
+            bitcoin_wtxid
+        );
+    }
+
+    #[test]
+    fn test_wtxid_segwit() {
+        let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("0200000000010113e176edfce2e0c7b5971d77dce40a7dc00def275bff7bacdb376f5cd47ba6670200000000ffffffff023d7f0000000000002251202781c84ebc5bce862463b8cd6145d68491c5fa83756562f0b9efc9ec81f7f7080000000000000000076a5d0414011400014016d434ce9d12620cc97e7e443444820c5cdf89b393f8a98cc8c79f0a91e6ba1f58f5e6a98f6a2357406bad50e0fb18abebfc94fb04c7976f2b9d43c8f2f4ef9f00000000").unwrap()).unwrap());
+        let wtxid = tx.wtxid();
+        let bitcoin_wtxid: [u8; 32] = tx.0.compute_wtxid().to_byte_array();
+        assert_eq!(
+            wtxid,
+            bitcoin_wtxid
+        );
+    }
+
+    #[test]
+    fn test_wtxid_mixed() {
+        let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("0100000000010259687388210557217699dfd43e04b41511e33aae70e1380d1083bbfb993f12a70100000000ffffffff17ef8a209e53c3b70b8b4944b5418c0c64ae5e515d66cc54675cc8d9348dc4cd000000006b483045022100b3a922bf43654c40377c2a426a081b112304dc3165e0b1428db21c83a8bdb7f502203a143acfb2f869816cf041899f446463ad0cc24c79cf66c51969edcb6e00487d0121026982c4421a2445efdd0162accb013d1feba9b9f84ea2c6057c3a535cf6c2dadbffffffff02f8fe9e0500000000160014eb00eec2dd3a416988f23418003268bdd4ffd400205913000000000017a91479deefa2344faeb4706858b65d9aa5ac00760f2987024830450221008016450ad0999300ad84d24f7ecb275a18b71f8aa70f85a8c64a1c7d5545dd34022033a904f78946d73294151937fb90686864bdb766eccd2c5e764f2be3136097580121032f2b2402a2c4aa07121355378d02f84eb6d17d61b834e51e4a62cab8667440ee0000000000").unwrap()).unwrap());
+        let wtxid = tx.wtxid();
+        let bitcoin_wtxid: [u8; 32] = tx.0.compute_wtxid().to_byte_array();
+        assert_eq!(
+            wtxid,
+            bitcoin_wtxid
         );
     }
 

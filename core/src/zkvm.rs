@@ -10,7 +10,7 @@ pub trait ZkvmGuest {
 }
 
 #[derive(Debug, Clone)]
-pub struct Proof {
+pub struct ZKProof {
     pub method_id: [u32; 8],
     pub journal: Vec<u8>,
 }
@@ -19,10 +19,10 @@ pub trait ZkvmHost {
     // Adding data to the host
     fn write<T: borsh::BorshSerialize>(&self, value: &T);
 
-    fn add_assumption(&self, proof: Proof);
+    fn add_assumption(&self, proof: ZKProof);
 
     // Proves with the given data
-    fn prove(&self, elf: &[u32]) -> Proof;
+    fn prove(&self, elf: &[u32]) -> ZKProof;
 }
 
 #[derive(Debug, Clone)]

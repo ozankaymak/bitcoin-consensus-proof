@@ -6,7 +6,7 @@ edition = "2021"
 [workspace]
 
 [dependencies]
-core = { path = "../../core" }
+bitcoin-consensus-core = { path = "../../core" }
 
 [[example]]
 name = "guest"

@@ -4,7 +4,10 @@ use bitcoin::{block::Bip34Error, script, Amount, Block, VarInt};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::{bitcoin_merkle::BitcoinMerkleTree, constants::MAGIC_BYTES, header_chain::CircuitBlockHeader, transaction::CircuitTransaction};
+use crate::{
+    bitcoin_merkle::BitcoinMerkleTree, constants::MAGIC_BYTES, header_chain::CircuitBlockHeader,
+    transaction::CircuitTransaction,
+};
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, BorshSerialize, BorshDeserialize)]
 pub struct CircuitBlock {
@@ -41,7 +44,8 @@ impl CircuitBlock {
         self.transactions[1..].iter().any(|tx| tx.is_segwit())
     }
 
-    pub fn calculate_wtxid_merkle_root(&self) -> [u8; 32] { // TODO: Make this optional
+    pub fn calculate_wtxid_merkle_root(&self) -> [u8; 32] {
+        // TODO: Make this optional
         // Wtxid of the coinbase transaction is always 0x000...000
         let mut wtxids = vec![[0u8; 32]];
         wtxids.extend(self.transactions[1..].iter().map(|tx| tx.wtxid()));
@@ -56,7 +60,11 @@ impl CircuitBlock {
         let mut size = 80; // Block header size
 
         size += VarInt::from(self.transactions.len()).size();
-        size += self.transactions.iter().map(|tx| tx.base_size()).sum::<usize>();
+        size += self
+            .transactions
+            .iter()
+            .map(|tx| tx.base_size())
+            .sum::<usize>();
 
         size
     }
@@ -65,12 +73,17 @@ impl CircuitBlock {
         let mut size = 80; // Block header size
 
         size += VarInt::from(self.transactions.len()).size();
-        size += self.transactions.iter().map(|tx| tx.total_size()).sum::<usize>();
+        size += self
+            .transactions
+            .iter()
+            .map(|tx| tx.total_size())
+            .sum::<usize>();
 
         size
     }
 
-    pub fn weight(&self) -> u64 { // TODO: Maybe u32
+    pub fn weight(&self) -> u64 {
+        // TODO: Maybe u32
         // This is the exact definition of a weight unit, as defined by BIP-141 (quote above).
         (self.base_size() * 3 + self.total_size()) as u64
     }
@@ -97,8 +110,9 @@ impl CircuitBlock {
             .iter()
             .rposition(|o| o.script_pubkey.len() >= 38 && o.script_pubkey.as_bytes()[0..6] == MAGIC)
         {
-            let commitment: [u8; 32] =
-                coinbase.output[pos].script_pubkey.as_bytes()[6..38].try_into().unwrap();
+            let commitment: [u8; 32] = coinbase.output[pos].script_pubkey.as_bytes()[6..38]
+                .try_into()
+                .unwrap();
             // Witness reserved value is in coinbase input witness.
             let witness_vec: Vec<_> = coinbase.input[0].witness.iter().collect();
             if witness_vec.len() == 1 && witness_vec[0].len() == 32 {
@@ -120,14 +134,17 @@ impl CircuitBlock {
         let weight = self.weight();
         let base_size_weight = (self.base_size() as u64) * 4; // Witness scale factor is 4.
 
-        if weight > 4_000_000 || base_size_weight > 4_000_000 { // 4_000_000 is the maximum block weight.
+        if weight > 4_000_000 || base_size_weight > 4_000_000 {
+            // 4_000_000 is the maximum block weight.
             return false;
         }
 
         true
     }
 
-    pub fn coinbase(&self) -> Option<&CircuitTransaction> { self.transactions.first() }
+    pub fn coinbase(&self) -> Option<&CircuitTransaction> {
+        self.transactions.first()
+    }
 
     // TODO: Maybe we don't need this
     pub fn bip34_block_height(&self) -> Result<u64, Bip34Error> {
@@ -139,13 +156,18 @@ impl CircuitBlock {
         // blocks), following bytes are little-endian representation of the
         // number (including a sign bit). Height is the height of the mined
         // block in the block chain, where the genesis block is height zero (0).
-        if self.block_header.version < 2 { // VERSION::TWO
+        if self.block_header.version < 2 {
+            // VERSION::TWO
             return Err(Bip34Error::Unsupported);
         }
 
         let coinbase_tx = self.coinbase().ok_or(Bip34Error::NotPresent)?;
         let input = coinbase_tx.input.first().ok_or(Bip34Error::NotPresent)?;
-        let push = input.script_sig.instructions_minimal().next().ok_or(Bip34Error::NotPresent)?;
+        let push = input
+            .script_sig
+            .instructions_minimal()
+            .next()
+            .ok_or(Bip34Error::NotPresent)?;
         match push.map_err(|_| Bip34Error::NotPresent)? {
             script::Instruction::PushBytes(b) => {
                 // Check that the number is encoded in the minimal way.
@@ -169,7 +191,6 @@ impl CircuitBlock {
             reward += output.value;
         }
         reward
-        
     }
 
     /// This is for the coinbase transaction only
@@ -177,26 +198,35 @@ impl CircuitBlock {
         // Extract and verify block height from coinbase script
         let coinbase_tx = &self.transactions[0];
         let coinbase_script = coinbase_tx.input[0].script_sig.as_bytes();
-        assert!(!coinbase_script.is_empty(), "Coinbase script cannot be empty");
-        
+        assert!(
+            !coinbase_script.is_empty(),
+            "Coinbase script cannot be empty"
+        );
+
         // First byte must be length of height serialization
         let height_len = coinbase_script[0] as usize;
-        assert!(height_len >= 1 && height_len <= 5, "Invalid height length in coinbase");
-        assert!(coinbase_script.len() > height_len, "Coinbase script too short");
+        assert!(
+            height_len >= 1 && height_len <= 5,
+            "Invalid height length in coinbase"
+        );
+        assert!(
+            coinbase_script.len() > height_len,
+            "Coinbase script too short"
+        );
 
         // Extract the height bytes
         let height_bytes = &coinbase_script[1..=height_len];
         let mut height_value = 0u32;
-        
+
         // Parse little-endian encoded height
         for (i, &byte) in height_bytes.iter().enumerate() {
             height_value |= (byte as u32) << (8 * i);
         }
-        
+
         // assert_eq!(height_value, block_height, "Block height mismatch in coinbase script");
         height_value
     }
-    
+
     /// This is for the coinbase transaction only
     pub fn get_witness_commitment_hash(&self) -> [u8; 32] {
         let coinbase_tx = &self.transactions[0];
@@ -208,7 +238,11 @@ impl CircuitBlock {
                 if output.script_pubkey.len() < 38 {
                     panic!("Witness commitment hash is too short");
                 }
-                assert_eq!(MAGIC_BYTES, output.script_pubkey.as_bytes()[2..6], "Invalid magic bytes (witness commitment prefix)");
+                assert_eq!(
+                    MAGIC_BYTES,
+                    output.script_pubkey.as_bytes()[2..6],
+                    "Invalid magic bytes (witness commitment prefix)"
+                );
                 return output.script_pubkey.as_bytes()[6..38].try_into().unwrap();
             }
         }

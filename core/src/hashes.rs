@@ -1,6 +1,6 @@
 // Bitcoin hash implementations
 
-use bitcoin::hashes::{sha256, Hash, ripemd160, hash160};
+use bitcoin::hashes::{hash160, ripemd160, sha256, Hash};
 
 use sha2::{Digest, Sha256};
 
@@ -42,13 +42,13 @@ pub fn calculate_hash160(input: &[u8]) -> [u8; 20] {
 pub fn calculate_tagged_hash(tag: &str, msg: &[u8]) -> [u8; 32] {
     // Calculate the tag hash
     let tag_hash = sha256::Hash::hash(tag.as_bytes()); // TODO: Make these constant, hashing tags every time is inefficient
-    
+
     // Create the preimage with tag hash repeated twice followed by message
     let mut preimage = Vec::with_capacity(tag_hash.as_byte_array().len() * 2 + msg.len());
     preimage.extend_from_slice(tag_hash.as_byte_array());
     preimage.extend_from_slice(tag_hash.as_byte_array());
     preimage.extend_from_slice(msg);
-    
+
     // Hash the preimage
     sha256::Hash::hash(&preimage).to_byte_array()
 }

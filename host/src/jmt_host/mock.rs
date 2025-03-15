@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! A mock, in-memory tree store useful for testing.
-//! 
+//!
 use std::collections::BTreeSet;
 
 use parking_lot::RwLock;
@@ -12,7 +12,10 @@ use anyhow::{bail, ensure, Result};
 use hashbrown::{hash_map::Entry, HashMap};
 
 use jmt::{
-    storage::{LeafNode, Node, NodeKey, HasPreimage, NodeBatch, StaleNodeIndex, TreeReader, TreeUpdateBatch, TreeWriter},
+    storage::{
+        HasPreimage, LeafNode, Node, NodeBatch, NodeKey, StaleNodeIndex, TreeReader,
+        TreeUpdateBatch, TreeWriter,
+    },
     KeyHash, OwnedValue, Version,
 };
 

@@ -100,21 +100,21 @@ impl BitcoinMerkleTree {
             // Special case: empty merkle tree
             return [0; 32];
         }
-        
+
         if txids.len() == 1 {
             // Special case: just one transaction
             return txids[0];
         }
-        
+
         // Start with the leaf hashes (txids)
         let mut current_level = txids;
         let mut next_level = Vec::new();
         let mut preimage = [0u8; 64];
-        
+
         // Iterate up the tree, computing each level until we reach the root
         while current_level.len() > 1 {
             next_level.clear();
-            
+
             // Process pairs of nodes
             for i in (0..current_level.len()).step_by(2) {
                 if i + 1 < current_level.len() {
@@ -126,15 +126,15 @@ impl BitcoinMerkleTree {
                     preimage[..32].copy_from_slice(&current_level[i]);
                     preimage[32..].copy_from_slice(&current_level[i]);
                 }
-                
+
                 let combined_hash = calculate_double_sha256(&preimage);
                 next_level.push(combined_hash);
             }
-            
+
             // Swap buffers - reuse memory by moving next_level to current_level
             std::mem::swap(&mut current_level, &mut next_level);
         }
-        
+
         // The root is the only element in the final level
         current_level[0]
     }
@@ -185,10 +185,10 @@ impl BitcoinMerkleTree {
 #[cfg(test)]
 mod tests {
 
+    use super::*;
     use crate::transaction::CircuitTransaction;
     use bitcoin::hashes::Hash;
     use bitcoin::Block;
-    use super::*;
 
     #[test]
     fn test_merkle_tree_0() {
@@ -231,7 +231,7 @@ mod tests {
         //     assert!(verify_merkle_proof(txid, &merkle_proof_i, merkle_root));
         // }
     }
-    
+
     #[test]
     fn test_efficient_merkle_root() {
         // Generate 1024 sample txids (just random data for this test)
@@ -244,30 +244,30 @@ mod tests {
             }
             txids.push(txid);
         }
-        
+
         // Generate root using the full tree method (BitcoinMerkleTree)
         let tree = BitcoinMerkleTree::new(txids.clone());
         let root_full = tree.root();
-        
+
         // Generate root using the memory-efficient method
         let root_efficient = BitcoinMerkleTree::generate_root(txids.clone());
-        
+
         // Verify both methods produce the same root
         assert_eq!(root_full, root_efficient);
-        
+
         // Analyze memory complexity by calculating hashes at each level
         println!("Memory complexity analysis of Merkle tree computation:");
         println!("Level 0 (leaves): {} hashes", txids.len());
-        
+
         let mut level_size = txids.len();
         let mut level = 1;
-        
+
         while level_size > 1 {
             level_size = (level_size + 1) / 2; // Ceiling division to handle odd numbers
             println!("Level {}: {} hashes", level, level_size);
             level += 1;
         }
-        
+
         // In the efficient implementation, we only need to store the current level
         // and the next level that we're computing, so the memory complexity is
         // approximately O(n) where n is the number of transactions

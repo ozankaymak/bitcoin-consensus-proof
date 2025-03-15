@@ -44,7 +44,9 @@ pub const NETWORK_PARAMS: NetworkParams = {
     match option_env!("BITCOIN_NETWORK") {
         Some(n) if matches!(n.as_bytes(), b"mainnet") => NetworkParams {
             max_bits: 0x1D00FFFF,
-            max_target: U256::from_be_hex("00000000FFFF0000000000000000000000000000000000000000000000000000"),
+            max_target: U256::from_be_hex(
+                "00000000FFFF0000000000000000000000000000000000000000000000000000",
+            ),
             max_target_bytes: [
                 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0,
@@ -61,7 +63,9 @@ pub const NETWORK_PARAMS: NetworkParams = {
         },
         Some(n) if matches!(n.as_bytes(), b"testnet4") => NetworkParams {
             max_bits: 0x1D00FFFF,
-            max_target: U256::from_be_hex("00000000FFFF0000000000000000000000000000000000000000000000000000"),
+            max_target: U256::from_be_hex(
+                "00000000FFFF0000000000000000000000000000000000000000000000000000",
+            ),
             max_target_bytes: [
                 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0,
@@ -78,7 +82,9 @@ pub const NETWORK_PARAMS: NetworkParams = {
         },
         Some(n) if matches!(n.as_bytes(), b"signet") => NetworkParams {
             max_bits: 0x1E0377AE,
-            max_target: U256::from_be_hex("00000377AE000000000000000000000000000000000000000000000000000000"),
+            max_target: U256::from_be_hex(
+                "00000377AE000000000000000000000000000000000000000000000000000000",
+            ),
             max_target_bytes: [
                 0, 0, 3, 119, 174, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0,
@@ -95,7 +101,9 @@ pub const NETWORK_PARAMS: NetworkParams = {
         },
         Some(n) if matches!(n.as_bytes(), b"regtest") => NetworkParams {
             max_bits: 0x207FFFFF,
-            max_target: U256::from_be_hex("7FFFFF0000000000000000000000000000000000000000000000000000000000"),
+            max_target: U256::from_be_hex(
+                "7FFFFF0000000000000000000000000000000000000000000000000000000000",
+            ),
             max_target_bytes: [
                 127, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0,
@@ -110,9 +118,12 @@ pub const NETWORK_PARAMS: NetworkParams = {
             taproot_activation_height: 0,
             // genesis_block_hash: [0x00; 32], // 0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206
         },
-        None => NetworkParams { // Default to mainnet
+        None => NetworkParams {
+            // Default to mainnet
             max_bits: 0x1D00FFFF,
-            max_target: U256::from_be_hex("00000000FFFF0000000000000000000000000000000000000000000000000000"),
+            max_target: U256::from_be_hex(
+                "00000000FFFF0000000000000000000000000000000000000000000000000000",
+            ),
             max_target_bytes: [
                 0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0,

@@ -87,20 +87,26 @@ impl UTXO {
         block_time: u32,
         is_coinbase: bool,
     ) -> Self {
-        UTXO {
+        println!("[DEBUG] Creating UTXO from TxOut");
+        let result = UTXO {
             value: Amount::to_sat(txout.value),
             block_height,
             block_time,
             is_coinbase,
             script_pubkey: txout.script_pubkey.to_bytes().to_vec(),
-        }
+        };
+        println!("[DEBUG] Resulting UTXO: {:?}", result);
+        result
     }
 
     pub fn into_txout(&self) -> bitcoin::TxOut {
-        bitcoin::TxOut {
+        println!("[DEBUG] Converting UTXO into TxOut");
+        let result = bitcoin::TxOut {
             value: Amount::from_sat(self.value),
             script_pubkey: ScriptBuf::from_bytes(self.script_pubkey.clone()),
-        }
+        };
+        println!("[DEBUG] Resulting TxOut: {:?}", result);
+        result
     }
 }
 
@@ -175,80 +181,104 @@ impl KeyOutPoint {
 impl UTXO {
     /// Serialize UTXO to bytes for JMT storage
     pub fn to_bytes(&self) -> Vec<u8> {
+        println!("[DEBUG] Serializing UTXO to bytes");
         let mut bytes = Vec::with_capacity(8 + 4 + 1 + self.script_pubkey.len());
         bytes.extend_from_slice(&self.value.to_be_bytes());
         bytes.extend_from_slice(&self.block_height.to_be_bytes());
         bytes.push(if self.is_coinbase { 1 } else { 0 });
         bytes.extend_from_slice(&self.script_pubkey);
-        bytes
+        let result = bytes;
+        println!("[DEBUG] Serialized UTXO Bytes: {:?}", result);
+        result
     }
 
     /// Deserialize UTXO from bytes
     pub fn from_bytes(bytes: &[u8]) -> Self {
+        println!("[DEBUG] Deserializing UTXO from bytes");
         let value = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
         let block_height = u32::from_be_bytes(bytes[8..12].try_into().unwrap());
         let block_time = u32::from_be_bytes(bytes[12..16].try_into().unwrap());
         let is_coinbase = bytes[17] == 1;
         let script_pubkey = bytes[17..].to_vec();
 
-        UTXO {
+        let result = UTXO {
             value,
             script_pubkey,
             block_height,
             block_time,
             is_coinbase,
-        }
+        };
+        println!("[DEBUG] Deserialized UTXO: {:?}", result);
+        result
     }
 
     /// Check if the UTXO is mature (based on the coinbase maturity rule)
     pub fn is_mature(&self, current_height: u32) -> bool {
+        println!("[DEBUG] Checking if UTXO is mature");
         if !self.is_coinbase {
             return true; // Non-coinbase outputs are immediately spendable
         }
 
         // Coinbase outputs require 100 confirmations before they can be spent
-        current_height >= self.block_height + 100
+        let result = current_height >= self.block_height + 100;
+        println!("[DEBUG] Is UTXO Mature: {}", result);
+        result
     }
 }
 
 impl UTXOSetGuest {
     pub fn new() -> Self {
-        UTXOSetGuest {
+        println!("[DEBUG] Creating new UTXOSetGuest");
+        let result = UTXOSetGuest {
             jmt_root: RootHash::from([0u8; 32]),
             version: 0,
             utxo_cache: BTreeMap::new(),
             // spent_utxos: BTreeMap::new(),
-        }
+        };
+        println!("[DEBUG] New UTXOSetGuest: {:?}", result);
+        result
     }
 
     /// Create a new UTXOSetGuest with a given root hash and version
     pub fn with_root(jmt_root: RootHash, version: Version) -> Self {
-        UTXOSetGuest {
+        println!("[DEBUG] Creating UTXOSetGuest with root and version");
+        let result = UTXOSetGuest {
             jmt_root,
             version,
             utxo_cache: BTreeMap::new(),
             // spent_utxos: BTreeMap::new(),
-        }
+        };
+        println!("[DEBUG] UTXOSetGuest with Root: {:?}", result);
+        result
     }
 
     /// Get the current JMT root
     pub fn get_root(&self) -> RootHash {
-        self.jmt_root
+        println!("[DEBUG] Getting JMT root");
+        let result = self.jmt_root;
+        println!("[DEBUG] JMT Root: {:?}", result);
+        result
     }
 
     /// Get the current version
     pub fn get_version(&self) -> Version {
-        self.version
+        println!("[DEBUG] Getting version");
+        let result = self.version;
+        println!("[DEBUG] Version: {:?}", result);
+        result
     }
 
     /// Update the JMT root hash and version
     pub fn update_root(&mut self, new_root: RootHash, new_version: Version) {
+        println!("[DEBUG] Updating JMT root and version");
         self.jmt_root = new_root;
         self.version = new_version;
+        println!("[DEBUG] Updated JMT Root: {:?}, Version: {:?}", self.jmt_root, self.version);
     }
 
     /// Verify that a UTXO exists
     pub fn verify_utxo_exists(&self, utxo_key: &KeyOutPoint) -> bool {
+        println!("[DEBUG] Verifying UTXO existence");
         // Check cache first
         if self.has_cached_utxo(utxo_key) {
             return true;
@@ -257,11 +287,16 @@ impl UTXOSetGuest {
         // Otherwise, we need to verify with a proof
         // This is a stub implementation - in real code, you would need to provide a proof
         // from the host that can be verified against the root
-        false
+        let result = false;
+        println!("[DEBUG] UTXO Exists: {}", result);
+        result
     }
 
     pub fn pop_utxo_from_cache(&mut self, utxo_key: &KeyOutPoint) -> Option<UTXO> {
-        self.utxo_cache.remove(utxo_key)
+        println!("[DEBUG] Popping UTXO from cache");
+        let result = self.utxo_cache.remove(utxo_key);
+        println!("[DEBUG] Popped UTXO: {:?}", result);
+        result
     }
 
     /// Add outputs from a transaction to the UTXO set
@@ -272,6 +307,7 @@ impl UTXOSetGuest {
         block_time: u32,
         is_coinbase: bool,
     ) {
+        println!("[DEBUG] Adding transaction outputs to UTXO cache");
         let txid = transaction.txid();
 
         for (vout, output) in transaction.output.iter().enumerate() {
@@ -295,6 +331,7 @@ impl UTXOSetGuest {
 
     /// Remove a UTXO (spent)
     pub fn remove_utxo(&mut self, utxo_key: &KeyOutPoint) {
+        println!("[DEBUG] Removing UTXO from cache");
         // Remove from cache if it exists
         self.utxo_cache.remove(utxo_key);
 
@@ -420,16 +457,23 @@ impl UTXOSetGuest {
 
     /// Get a UTXO from the cache
     pub fn get_cached_utxo(&self, key: &KeyOutPoint) -> Option<UTXO> {
-        self.utxo_cache.get(key).cloned()
+        println!("[DEBUG] Getting cached UTXO");
+        let result = self.utxo_cache.get(key).cloned();
+        println!("[DEBUG] Cached UTXO: {:?}", result);
+        result
     }
 
     /// Check if a UTXO exists in the cache
     pub fn has_cached_utxo(&self, key: &KeyOutPoint) -> bool {
-        self.utxo_cache.contains_key(key)
+        println!("[DEBUG] Checking if UTXO is cached");
+        let result = self.utxo_cache.contains_key(key);
+        println!("[DEBUG] Has Cached UTXO: {}", result);
+        result
     }
 
     /// Add a UTXO to the cache (without updating the JMT)
     pub fn cache_utxo(&mut self, key: KeyOutPoint, utxo: UTXO) {
+        println!("[DEBUG] Caching UTXO");
         self.utxo_cache.insert(key, utxo);
     }
 
@@ -441,6 +485,7 @@ impl UTXOSetGuest {
         block_time: u32,
         is_coinbase: bool,
     ) {
+        println!("[DEBUG] Processing transaction outputs");
         let txid = transaction.txid();
 
         for (vout, output) in transaction.output.iter().enumerate() {
@@ -464,6 +509,7 @@ impl UTXOSetGuest {
 
     /// Clear the UTXO cache
     pub fn clear_cache(&mut self) {
+        println!("[DEBUG] Clearing UTXO cache");
         self.utxo_cache.clear();
     }
 
@@ -476,6 +522,7 @@ impl UTXOSetGuest {
     ///
     /// Returns a tuple of (to_add, to_remove) where each is a set of UTXO keys
     pub fn categorize_cached_changes(&self) -> (Vec<&KeyOutPoint>, Vec<&KeyOutPoint>) {
+        println!("[DEBUG] Categorizing cached changes");
         let mut to_add = Vec::new();
         let mut to_remove = Vec::new();
 
@@ -483,6 +530,8 @@ impl UTXOSetGuest {
         // which UTXOs need to be added to the JMT and which need to be removed
 
         // For now, we return empty vectors as this is just a stub
-        (to_add, to_remove)
+        let result = (to_add, to_remove);
+        println!("[DEBUG] Categorized Cached Changes: {:?}", result);
+        result
     }
 }

@@ -10,6 +10,8 @@ use jmt::{
     KeyHash, OwnedValue, RootHash, Sha256Jmt, Version,
 };
 
+use bitcoin_consensus_core::{utxo_set::KeyOutPoint, utxo_set::UTXO, TransactionUTXOProofs, UTXOInsertionProof};
+
 /// RocksDB storage implementation for the Jellyfish Merkle Tree
 pub struct RocksDbStorage {
     /// The underlying RocksDB instance
@@ -135,6 +137,97 @@ impl RocksDbStorage {
             .context("Failed to store latest version")?;
 
         Ok(())
+    }
+
+    /// Generates a proof for a given UTXO key
+    pub fn generate_proof(&self, utxo_key: &KeyOutPoint, version: Version) -> Result<()> {
+        println!("[DEBUG] Generating proof for UTXO key: {:?}", utxo_key);
+
+        // Get the JMT tree
+        let tree = self.get_jmt();
+
+        // Compute the key hash
+        let key_hash = utxo_key.to_key_hash();
+
+        // Retrieve the value and proof from the tree
+        let (value_opt, proof) = tree.get_with_proof(key_hash, version)?;
+
+        // Ensure the value exists
+        if value_opt.is_none() {
+            return Err(anyhow!("UTXO not found for the given key"));
+        }
+
+        // Verify the proof
+        proof.verify_existence(tree.get_root_hash(version)?, key_hash, &value_opt.unwrap())?;
+
+        println!("[DEBUG] Proof verified for UTXO key: {:?}", utxo_key);
+
+        Ok(())
+    }
+
+    /// Generates UTXO inclusion proofs for a list of UTXO keys
+    pub fn generate_utxo_inclusion_proofs(&self, utxo_keys: &[KeyOutPoint], version: Version) -> Result<Vec<TransactionUTXOProofs>> {
+        println!("[DEBUG] Generating UTXO inclusion proofs");
+        let mut proofs = Vec::new();
+
+        for utxo_key in utxo_keys {
+            let key_hash = utxo_key.to_key_hash();
+            let (value_opt, proof) = self.get_jmt().get_with_proof(key_hash, version)?;
+
+            if let Some(value) = value_opt {
+                let utxo = UTXO::from_bytes(&value);
+                // Get latest root and unwrap it since we need it
+                let root = match self.get_latest_root()? {
+                    Some(r) => r,
+                    None => return Err(anyhow!("No root hash found")),
+                };
+                
+                let transaction_proof = TransactionUTXOProofs {
+                    update_proof: vec![Some((proof, utxo, root))]
+                        .into_iter()
+                        .collect(),
+                    new_root: root,
+                };
+                proofs.push(transaction_proof);
+            } else {
+                return Err(anyhow!("UTXO not found for key: {:?}", utxo_key));
+            }
+        }
+
+        println!("[DEBUG] Generated UTXO inclusion proofs: {:?}", proofs);
+        Ok(proofs)
+    }
+
+    /// Generates UTXO insertion proofs for a list of UTXO keys
+    pub fn generate_utxo_insertion_proofs(&self, utxo_keys: &[KeyOutPoint], version: Version) -> Result<Vec<UTXOInsertionProof>> {
+        println!("[DEBUG] Generating UTXO insertion proofs");
+        let mut proofs = Vec::new();
+
+        for utxo_key in utxo_keys {
+            let key_hash = utxo_key.to_key_hash();
+            let (value_opt, _) = self.get_jmt().get_with_proof(key_hash, version)?;
+
+            if let Some(value) = value_opt {
+                // Convert SparseMerkleProof to UpdateMerkleProof
+                // This requires an additional call to get the update proof
+                let (new_root, update_proof, _) = self.get_jmt().put_value_set_with_proof(
+                    [(key_hash, Some(value.clone()))],
+                    version,
+                )?;
+                
+                let insertion_proof = UTXOInsertionProof {
+                    key: *utxo_key,
+                    update_proof,
+                    new_root,
+                };
+                proofs.push(insertion_proof);
+            } else {
+                return Err(anyhow!("UTXO not found for key: {:?}", utxo_key));
+            }
+        }
+
+        println!("[DEBUG] Generated UTXO insertion proofs: {:?}", proofs);
+        Ok(proofs)
     }
 }
 

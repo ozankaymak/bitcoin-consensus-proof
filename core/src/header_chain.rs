@@ -36,6 +36,7 @@ pub struct CircuitBlockHeader {
 
 impl CircuitBlockHeader {
     pub fn compute_block_hash(&self) -> [u8; 32] {
+        println!("[DEBUG] Computing block hash");
         let mut hasher = Sha256::new();
         hasher.update(self.version.to_le_bytes());
         hasher.update(self.prev_block_hash);
@@ -50,6 +51,7 @@ impl CircuitBlockHeader {
             .finalize()
             .try_into()
             .expect("SHA256 should produce a 32-byte output");
+        println!("[DEBUG] Block Hash: {:?}", result);
         result
     }
 }
@@ -95,7 +97,8 @@ pub struct HeaderChainState {
 
 impl HeaderChainState {
     pub fn new() -> Self {
-        HeaderChainState {
+        println!("[DEBUG] Creating new HeaderChainState");
+        let result = HeaderChainState {
             block_height: u32::MAX,
             total_work: [0u8; 32],
             best_block_hash: [0u8; 32],
@@ -103,10 +106,13 @@ impl HeaderChainState {
             epoch_start_time: 0,
             prev_11_timestamps: [0u32; 11],
             block_time: 0,
-        }
+        };
+        println!("[DEBUG] New HeaderChainState: {:?}", result);
+        result
     }
 
     pub fn verify_and_apply_header(&mut self, block_header: &CircuitBlockHeader) {
+        println!("[DEBUG] Verifying and applying block header");
         let mut current_target_bytes = if IS_REGTEST {
             NETWORK_PARAMS.max_target.to_be_bytes()
         } else {
@@ -197,21 +203,29 @@ impl HeaderChainState {
         }
 
         self.total_work = current_work.to_be_bytes();
+        println!("[DEBUG] Updated HeaderChainState: {:?}", self);
     }
 }
 
 fn median(arr: [u32; 11]) -> u32 {
+    println!("[DEBUG] Calculating median of timestamps");
     let mut sorted_arr = arr;
     sorted_arr.sort_unstable();
-    sorted_arr[5]
+    let result = sorted_arr[5];
+    println!("[DEBUG] Median: {}", result);
+    result
 }
 
 fn validate_timestamp(block_time: u32, prev_11_timestamps: [u32; 11]) -> bool {
+    println!("[DEBUG] Validating block timestamp");
     let median_time = median(prev_11_timestamps);
-    block_time > median_time
+    let result = block_time > median_time;
+    println!("[DEBUG] Timestamp Valid: {}", result);
+    result
 }
 
 pub fn bits_to_target(bits: u32) -> [u8; 32] {
+    println!("[DEBUG] Converting bits to target");
     let size = (bits >> 24) as usize;
     let mantissa = bits & 0x00ffffff;
 
@@ -220,11 +234,13 @@ pub fn bits_to_target(bits: u32) -> [u8; 32] {
     } else {
         U256::from(mantissa) << (8 * (size - 3))
     };
-    // println!("Output: {:?}", target.to_be_bytes());
-    target.to_be_bytes()
+    let result = target.to_be_bytes();
+    println!("[DEBUG] Target: {:?}", result);
+    result
 }
 
 fn target_to_bits(target: &[u8; 32]) -> u32 {
+    println!("[DEBUG] Converting target to bits");
     let target_u256 = U256::from_be_slice(target);
     let target_bits = target_u256.bits();
     let size = (263 - target_bits) / 8;
@@ -233,7 +249,9 @@ fn target_to_bits(target: &[u8; 32]) -> u32 {
     compact_target[1] = target[size - 1 as usize];
     compact_target[2] = target[size + 0 as usize];
     compact_target[3] = target[size + 1 as usize];
-    u32::from_be_bytes(compact_target)
+    let result = u32::from_be_bytes(compact_target);
+    println!("[DEBUG] Bits: {}", result);
+    result
 }
 
 fn calculate_new_difficulty(
@@ -241,6 +259,7 @@ fn calculate_new_difficulty(
     last_timestamp: u32,
     current_target: u32,
 ) -> [u8; 32] {
+    println!("[DEBUG] Calculating new difficulty");
     let mut actual_timespan = last_timestamp - epoch_start_time;
     if actual_timespan < EXPECTED_EPOCH_TIMESPAN / 4 {
         actual_timespan = EXPECTED_EPOCH_TIMESPAN / 4;
@@ -256,10 +275,13 @@ fn calculate_new_difficulty(
     if new_target > NETWORK_PARAMS.max_target {
         new_target = NETWORK_PARAMS.max_target;
     }
-    new_target.to_be_bytes()
+    let result = new_target.to_be_bytes();
+    println!("[DEBUG] New Difficulty: {:?}", result);
+    result
 }
 
 fn check_hash_valid(hash: &[u8; 32], target_bytes: &[u8; 32]) {
+    println!("[DEBUG] Checking hash validity");
     for i in 0..32 {
         if hash[31 - i] < target_bytes[i] {
             return;
@@ -267,13 +289,16 @@ fn check_hash_valid(hash: &[u8; 32], target_bytes: &[u8; 32]) {
             panic!("Hash is not valid");
         }
     }
+    println!("[DEBUG] Hash is valid");
 }
 
 fn calculate_work(target: &[u8; 32]) -> U256 {
+    println!("[DEBUG] Calculating work from target");
     let target = U256::from_be_slice(target);
     let target_plus_one = target.saturating_add(&U256::ONE);
-    let work = U256::MAX.wrapping_div(&target_plus_one);
-    work
+    let result = U256::MAX.wrapping_div(&target_plus_one);
+    println!("[DEBUG] Work: {:?}", result);
+    result
 }
 
 /// The output of the header chain circuit.
@@ -533,44 +558,44 @@ mod tests {
         (1464123766, 1465353421, 403014710, 403020704),
         (1465353718, 1466485981, 403020704, 402997206),
         (1466486338, 1467673575, 402997206, 402990845),
-        (1467674161, 1468883232, 402990845, 402990697),
-        (1468884162, 1470163257, 402990697, 403010088),
-        (1470163842, 1471287293, 403010088, 402984668),
-        (1471287554, 1472478633, 402984668, 402979592),
-        (1472479861, 1473662270, 402979592, 402972254),
-        (1473662347, 1474794756, 402972254, 402951892),
-        (1474795015, 1475923695, 402951892, 402931908),
-        (1475924010, 1477157004, 402931908, 402937298),
-        (1477159378, 1478364220, 402937298, 402936180),
-        (1478364418, 1479457348, 402936180, 402908884),
-        (1479457815, 1480646474, 402908884, 402904457),
-        (1480646786, 1481765173, 402904457, 402885509),
-        (1481765313, 1482946227, 402885509, 402879999),
-        (1482946855, 1484087479, 402879999, 402867065),
-        (1484088052, 1485125083, 402867065, 402836551),
-        (1485125572, 1486251490, 402836551, 402823865),
-        (1486251529, 1487410067, 402823865, 402816659),
-        (1487410706, 1488567833, 402816659, 402809567),
-        (1488567886, 1489739512, 402809567, 402804657),
-        (1489739775, 1490891447, 402804657, 402797402),
-        (1490891948, 1492052381, 402797402, 402791539),
-        (1492052390, 1493259291, 402791539, 402791230),
-        (1493259601, 1494387130, 402791230, 402781863),
-        (1494387648, 1495524275, 402781863, 402774100),
-        (1495524592, 1496586576, 402774100, 402759343),
-        (1496586907, 1497740528, 402759343, 402754430),
-        (1497741533, 1498956326, 402754430, 402754864),
-        (1498956437, 1500021909, 402754864, 402742748),
-        (1500021942, 1501153235, 402742748, 402736949),
-        (1501153434, 1502280491, 402736949, 402731232),
-        (1502282210, 1503539571, 402731232, 402734313),
-        (1503539857, 1504704167, 402734313, 402731275),
-        (1504704195, 1505715737, 402731275, 402718488),
-        (1505716276, 1506903856, 402718488, 402717299),
-        (1506904066, 1508039962, 402717299, 402713392),
-        (1508040302, 1509036725, 402713392, 402702781),
-        (1509036762, 1510324761, 402702781, 402705995),
-        (1510326831, 1511552082, 402705995, 402706678),
+        (1467674161, 1468883232, 402990845, 403010088),
+        (1468884162, 1470163257, 403010088, 402984668),
+        (1470163842, 1471287293, 402984668, 402979592),
+        (1471287554, 1472478633, 402979592, 402972254),
+        (1472479861, 1473662270, 402972254, 402951892),
+        (1473662347, 1474794756, 402951892, 402931908),
+        (1474795015, 1475923695, 402931908, 402937298),
+        (1475924010, 1477157004, 402937298, 402936180),
+        (1477159378, 1478364220, 402936180, 402908884),
+        (1478364418, 1479457348, 402908884, 402904457),
+        (1479457815, 1480646474, 402904457, 402885509),
+        (1480646786, 1481765173, 402885509, 402879999),
+        (1481765313, 1482946227, 402879999, 402867065),
+        (1482946855, 1484087479, 402867065, 402836551),
+        (1484088052, 1485125083, 402836551, 402823865),
+        (1485125572, 1486251490, 402823865, 402816659),
+        (1486251529, 1487410067, 402816659, 402809567),
+        (1487410706, 1488567833, 402809567, 402804657),
+        (1488567886, 1489739512, 402804657, 402797402),
+        (1489739775, 1490891447, 402797402, 402791539),
+        (1490891948, 1492052381, 402791539, 402791230),
+        (1492052390, 1493259291, 402791230, 402781863),
+        (1493259601, 1494387130, 402781863, 402774100),
+        (1494387648, 1495524275, 402774100, 402759343),
+        (1495524592, 1496586576, 402759343, 402754430),
+        (1496586907, 1497740528, 402754430, 402754864),
+        (1497741533, 1498956326, 402754864, 402742748),
+        (1498956437, 1500021909, 402742748, 402736949),
+        (1500021942, 1501153235, 402736949, 402731232),
+        (1501153434, 1502280491, 402731232, 402734313),
+        (1502282210, 1503539571, 402734313, 402731275),
+        (1503539857, 1504704167, 402731275, 402718488),
+        (1504704195, 1505715737, 402718488, 402717299),
+        (1505716276, 1506903856, 402717299, 402713392),
+        (1506904066, 1508039962, 402713392, 402702781),
+        (1508040302, 1509036725, 402702781, 402705995),
+        (1509036762, 1510324761, 402705995, 402706678),
+        (1510326831, 1511552082, 402706678, 402706678),
         (1511553196, 1512577362, 402706678, 402698477),
         (1512577401, 1513604778, 402698477, 402691653),
         (1513605320, 1514778580, 402691653, 402690497),

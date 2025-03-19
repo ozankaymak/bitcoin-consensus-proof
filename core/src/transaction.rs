@@ -27,16 +27,23 @@ pub struct CircuitTransaction(pub Transaction);
 
 impl CircuitTransaction {
     pub fn from(transaction: Transaction) -> Self {
-        Self(transaction)
+        println!("[DEBUG] Creating CircuitTransaction from Transaction");
+        let result = Self(transaction);
+        println!("[DEBUG] Resulting CircuitTransaction: {:?}", result);
+        result
     }
 
     pub fn inner(&self) -> &Transaction {
-        &self.0
+        println!("[DEBUG] Accessing inner Transaction");
+        let result = &self.0;
+        println!("[DEBUG] Inner Transaction: {:?}", result);
+        result
     }
 
     /// Returns the transaction id, in big-endian byte order. One must be careful when dealing with
     /// Bitcoin transaction ids, as they are little-endian in the Bitcoin protocol.
     pub fn txid(&self) -> [u8; 32] {
+        println!("[DEBUG] Calculating transaction ID");
         let mut tx_bytes_vec = vec![];
         self.inner()
             .version
@@ -54,13 +61,16 @@ impl CircuitTransaction {
             .lock_time
             .consensus_encode(&mut tx_bytes_vec)
             .unwrap();
-        calculate_double_sha256(&tx_bytes_vec)
+        let result = calculate_double_sha256(&tx_bytes_vec);
+        println!("[DEBUG] Transaction ID: {:?}", result);
+        result
     }
 
     /// Returns the witness-transaction id, in big-endian byte order. One must be careful when dealing with
     /// Bitcoin transaction ids, as they are little-endian in the Bitcoin protocol.
     /// the witness-transaction id of the coinbase transaction is assumed to be "0x0000000000000000000000000000000000000000000000000000000000000000"
     pub fn wtxid(&self) -> [u8; 32] {
+        println!("[DEBUG] Calculating witness transaction ID");
         if self.is_coinbase() {
             return [0; 32];
         }
@@ -93,18 +103,21 @@ impl CircuitTransaction {
             .consensus_encode(&mut tx_bytes_vec)
             .unwrap();
         println!("{:?}", tx_bytes_vec);
-        calculate_double_sha256(&tx_bytes_vec)
+        let result = calculate_double_sha256(&tx_bytes_vec);
+        println!("[DEBUG] Witness Transaction ID: {:?}", result);
+        result
     }
 
     pub fn is_segwit(&self) -> bool {
-        self.inner()
-            .input
-            .iter()
-            .any(|input| !input.witness.is_empty())
+        println!("[DEBUG] Checking if transaction is SegWit");
+        let result = self.inner().input.iter().any(|input| !input.witness.is_empty());
+        println!("[DEBUG] Is SegWit: {}", result);
+        result
     }
 
     /// Determines if transaction is final using Bitcoin Core's IsFinalTx logic
     pub fn is_final_tx(&self, block_height: i32, block_time: i64) -> bool {
+        println!("[DEBUG] Checking if transaction is final");
         // If nLockTime is 0, transaction is final
         if self.0.lock_time.to_consensus_u32() == 0 {
             return true;
@@ -128,7 +141,9 @@ impl CircuitTransaction {
             }
         }
 
-        true
+        let result = true;
+        println!("[DEBUG] Is Final Transaction: {}", result);
+        result
     }
 
     /// Calculate sequence locks based on BIP68
@@ -138,6 +153,7 @@ impl CircuitTransaction {
         prev_heights: &mut Vec<i32>,
         block: &CircuitBlockHeader,
     ) -> (i32, i64) {
+        println!("[DEBUG] Calculating sequence locks");
         assert_eq!(prev_heights.len(), self.0.input.len());
 
         // Will be set to the equivalent height- and time-based nLockTime
@@ -199,7 +215,9 @@ impl CircuitTransaction {
             }
         }
 
-        (min_height, min_time)
+        let result = (min_height, min_time);
+        println!("[DEBUG] Sequence Locks: {:?}", result);
+        result
     }
 
     /// Evaluate whether the sequence locks are satisfied
@@ -208,6 +226,7 @@ impl CircuitTransaction {
         block_height: i32,
         lock_pair: (i32, i64),
     ) -> bool {
+        println!("[DEBUG] Evaluating sequence locks");
         // Get current block time
         let block_time = get_median_time_past(block);
 
@@ -216,7 +235,9 @@ impl CircuitTransaction {
             return false;
         }
 
-        true
+        let result = true;
+        println!("[DEBUG] Sequence Locks Satisfied: {}", result);
+        result
     }
 
     /// Check sequence locks
@@ -227,8 +248,11 @@ impl CircuitTransaction {
         block: &CircuitBlockHeader,
         block_height: i32,
     ) -> bool {
+        println!("[DEBUG] Checking sequence locks");
         let lock_pair = self.calculate_sequence_locks(flags, prev_heights, block);
-        Self::evaluate_sequence_locks(block, block_height, lock_pair)
+        let result = Self::evaluate_sequence_locks(block, block_height, lock_pair);
+        println!("[DEBUG] Sequence Locks Check: {}", result);
+        result
     }
 }
 

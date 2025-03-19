@@ -6,9 +6,10 @@ use bitcoin_consensus_core::{
     block::CircuitBlock,
     utxo_set::{KeyOutPoint, UTXO},
     BitcoinConsensusCircuitInput, BitcoinConsensusCircuitOutput, BitcoinConsensusPrevProofType,
+    TransactionUTXOProofs, UTXOInsertionProof,
 };
 use borsh::BorshDeserialize;
-use host::{generate_utxo_inclusion_proof, parse_block_from_file, update_utxo_set};
+use host::{generate_utxo_inclusion_proof, parse_block_from_file, update_utxo_set, generate_utxo_insertion_proofs};
 use risc0_zkvm::{compute_image_id, default_prover, ExecutorEnv, ProverOpts, Receipt};
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -92,6 +93,14 @@ fn main() -> Result<(), anyhow::Error> {
         info!("Previous Receipt Journal: {:?}", receipt.journal);
         Some(receipt)
     };
+    
+    // Store previous block height for later verification
+    let prev_block_height = if let Some(receipt) = &prev_receipt {
+        let prev_output = BitcoinConsensusCircuitOutput::try_from_slice(&receipt.journal.bytes)?;
+        Some(prev_output.bitcoin_state.header_chain_state.block_height)
+    } else {
+        None
+    };
 
     let mut start = 0;
     let prev_proof = match prev_receipt.clone() {
@@ -117,6 +126,10 @@ fn main() -> Result<(), anyhow::Error> {
 
     let mut blocks = Vec::new();
     let mut utxo_updates: Vec<(KeyOutPoint, Option<UTXO>)> = Vec::new();
+    
+    // Track the UTXOs that need proofs
+    let mut utxos_needing_inclusion_proofs: Vec<KeyOutPoint> = Vec::new();
+    let mut utxos_for_insertion_proofs: Vec<(KeyOutPoint, UTXO)> = Vec::new();
 
     // Process blocks and track UTXO changes
     for i in start..start + batch_size {
@@ -145,7 +158,7 @@ fn main() -> Result<(), anyhow::Error> {
                 "  Processing transaction {}/{}: {}",
                 tx_index + 1,
                 block.txdata.len(),
-                tx.txid()
+                tx.compute_txid()
             );
             info!(
                 "    Inputs: {}, Outputs: {}",
@@ -165,10 +178,11 @@ fn main() -> Result<(), anyhow::Error> {
                     vout: input.previous_output.vout,
                 };
 
-                // Mark UTXO as spent
+                // Mark UTXO as spent and track for inclusion proof
                 utxo_updates.push((utxo_key, None));
+                utxos_needing_inclusion_proofs.push(utxo_key);
                 info!(
-                    "    Marked UTXO as spent: {:?}:{}",
+                    "    Marked UTXO as spent and tracked for inclusion proof: {:?}:{}",
                     utxo_key.txid, utxo_key.vout
                 );
             }
@@ -195,7 +209,7 @@ fn main() -> Result<(), anyhow::Error> {
                             + 1
                             + (i - start) as u32
                     }
-                    None => (i as u32), // If genesis, assume i is the height
+                    None => i as u32, // If genesis, assume i is the height
                 };
 
                 let utxo = UTXO {
@@ -206,10 +220,11 @@ fn main() -> Result<(), anyhow::Error> {
                     block_time: block.header.time,
                 };
 
-                // Add new UTXO
-                utxo_updates.push((utxo_key, Some(utxo)));
+                // Add new UTXO and track for insertion proof
+                utxo_updates.push((utxo_key, Some(utxo.clone())));
+                utxos_for_insertion_proofs.push((utxo_key, utxo));
                 info!(
-                    "    Added new UTXO: {:?}:{} ({} sats)",
+                    "    Added new UTXO and tracked for insertion proof: {:?}:{} ({} sats)",
                     utxo_key.txid,
                     utxo_key.vout,
                     output.value.to_sat()
@@ -218,9 +233,65 @@ fn main() -> Result<(), anyhow::Error> {
         }
     }
 
+    // First update the UTXO set to ensure the JMT is current
+    info!("Updating local UTXO set before generating proofs");
+    let (jmt_root, _) = update_utxo_set(&db_path, utxo_updates.clone())?;
+    info!("Local UTXO set updated:");
+    info!("  JMT root: {:?}", jmt_root);
+    info!("  Root hash bytes: {:?}", jmt_root.0);
+
+    // Generate inclusion proofs for the needed UTXOs
+    info!("Generating UTXO inclusion proofs");
+    let mut block_utxo_inclusion_proofs: Vec<Vec<TransactionUTXOProofs>> = Vec::new();
+    
+    // Group by block
+    for i in 0..blocks.len() {
+        let block_relevant_keys = &utxos_needing_inclusion_proofs[..];
+        if block_relevant_keys.is_empty() {
+            info!("  No inclusion proofs needed for block {}", i);
+            block_utxo_inclusion_proofs.push(Vec::new());
+            continue;
+        }
+        
+        info!("  Generating inclusion proofs for block {} with {} UTXOs", i, block_relevant_keys.len());
+        let storage = host::jmt_host::rocks_db::RocksDbStorage::new(&db_path)?;
+        let utxo_proofs = storage.generate_utxo_inclusion_proofs(
+            block_relevant_keys, 
+            storage.get_latest_version()?
+        )?;
+        
+        info!("  Generated {} inclusion proofs for block {}", utxo_proofs.len(), i);
+        block_utxo_inclusion_proofs.push(utxo_proofs);
+    }
+    
+    // Generate insertion proofs
+    info!("Generating UTXO insertion proofs");
+    let utxo_insertion_proofs: Vec<UTXOInsertionProof> = if utxos_for_insertion_proofs.is_empty() {
+        info!("  No insertion proofs needed");
+        Vec::new()
+    } else {
+        info!("  Generating insertion proofs for {} UTXOs", utxos_for_insertion_proofs.len());
+        let keys_only: Vec<KeyOutPoint> = utxos_for_insertion_proofs
+            .iter()
+            .map(|(k, _)| *k)
+            .collect();
+        
+        let storage = host::jmt_host::rocks_db::RocksDbStorage::new(&db_path)?;
+        storage.generate_utxo_insertion_proofs(
+            &keys_only,
+            storage.get_latest_version()?
+        )?
+    };
+    
+    info!("Proof generation completed:");
+    info!("  Inclusion proofs for {} blocks", block_utxo_inclusion_proofs.len());
+    info!("  Insertion proofs: {}", utxo_insertion_proofs.len());
+
     info!("Preparing circuit input:");
     info!("  Number of blocks: {}", blocks.len());
     info!("  Number of UTXO updates: {}", utxo_updates.len());
+    info!("  Number of UTXO inclusion proofs: {}", block_utxo_inclusion_proofs.len());
+    info!("  Number of UTXO insertion proofs: {}", utxo_insertion_proofs.len());
     info!("  Previous proof type: {:?}", prev_proof);
 
     // Prepare the input for the circuit
@@ -228,8 +299,8 @@ fn main() -> Result<(), anyhow::Error> {
         method_id: bitcoin_guest_id,
         prev_proof,
         blocks,
-        utxo_inclusion_proofs: vec![], // Empty for now as we're not using them
-        utxo_insertion_proofs: vec![], // Empty for now as we're not using them
+        utxo_inclusion_proofs: block_utxo_inclusion_proofs,
+        utxo_insertion_proofs,
     };
 
     // Build ENV
@@ -273,16 +344,6 @@ fn main() -> Result<(), anyhow::Error> {
         output.bitcoin_state.utxo_set_commitment.jmt_root
     );
 
-    // Update the local UTXO set with tracked changes
-    info!(
-        "Updating local UTXO set with {} changes",
-        utxo_updates.len()
-    );
-    let (new_root, _) = update_utxo_set(&db_path, utxo_updates)?;
-    info!("Local UTXO set updated:");
-    info!("  New JMT root: {:?}", new_root);
-    info!("  New root hash bytes: {:?}", new_root.0);
-
     // Verify root hash matches receipt
     info!("Verifying JMT root hash matches receipt");
     info!(
@@ -293,13 +354,23 @@ fn main() -> Result<(), anyhow::Error> {
         "  Receipt root hash bytes: {:?}",
         output.bitcoin_state.utxo_set_commitment.jmt_root.0
     );
-    info!("  Local JMT root: {:?}", new_root);
-    info!("  Local root hash bytes: {:?}", new_root.0);
-    assert_eq!(
-        output.bitcoin_state.utxo_set_commitment.jmt_root, new_root,
-        "JMT root mismatch between guest and host"
-    );
-    info!("JMT root verification successful - roots match");
+    info!("  Local JMT root: {:?}", jmt_root);
+    info!("  Local root hash bytes: {:?}", jmt_root.0);
+    
+    // If roots don't match, it means the guest program modified the UTXO set differently
+    // than our local execution. In that case, we need to update our local set to match.
+    if output.bitcoin_state.utxo_set_commitment.jmt_root != jmt_root {
+        info!("JMT root mismatch between guest and host - updating local UTXO set to match");
+        
+        // In a production system, we would sync the local UTXO set with the verified one
+        // For now, let's just assert that they should match
+        assert_eq!(
+            output.bitcoin_state.utxo_set_commitment.jmt_root, jmt_root,
+            "JMT root mismatch between guest and host - critical error"
+        );
+    } else {
+        info!("JMT root verification successful - roots match");
+    }
 
     // Verify block height matches
     info!("Verifying block height matches receipt");
@@ -307,7 +378,10 @@ fn main() -> Result<(), anyhow::Error> {
         "  Receipt block height: {}",
         output.bitcoin_state.header_chain_state.block_height
     );
-    let local_block_height = output.bitcoin_state.header_chain_state.block_height;
+    let local_block_height = match prev_block_height {
+        Some(height) => height + batch_size as u32,
+        None => (batch_size - 1) as u32, // If genesis, height should be batch_size - 1
+    };
     info!("  Local block height: {}", local_block_height);
     assert_eq!(
         output.bitcoin_state.header_chain_state.block_height, local_block_height,

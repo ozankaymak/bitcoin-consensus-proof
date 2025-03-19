@@ -110,7 +110,11 @@ impl CircuitTransaction {
 
     pub fn is_segwit(&self) -> bool {
         println!("[DEBUG] Checking if transaction is SegWit");
-        let result = self.inner().input.iter().any(|input| !input.witness.is_empty());
+        let result = self
+            .inner()
+            .input
+            .iter()
+            .any(|input| !input.witness.is_empty());
         println!("[DEBUG] Is SegWit: {}", result);
         result
     }

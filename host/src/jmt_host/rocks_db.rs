@@ -10,7 +10,9 @@ use jmt::{
     KeyHash, OwnedValue, RootHash, Sha256Jmt, Version,
 };
 
-use bitcoin_consensus_core::{utxo_set::KeyOutPoint, utxo_set::UTXO, TransactionUTXOProofs, UTXOInsertionProof};
+use bitcoin_consensus_core::{
+    utxo_set::KeyOutPoint, utxo_set::UTXO, TransactionUTXOProofs, UTXOInsertionProof,
+};
 
 /// RocksDB storage implementation for the Jellyfish Merkle Tree
 pub struct RocksDbStorage {
@@ -166,7 +168,11 @@ impl RocksDbStorage {
     }
 
     /// Generates UTXO inclusion proofs for a list of UTXO keys
-    pub fn generate_utxo_inclusion_proofs(&self, utxo_keys: &[KeyOutPoint], version: Version) -> Result<Vec<TransactionUTXOProofs>> {
+    pub fn generate_utxo_inclusion_proofs(
+        &self,
+        utxo_keys: &[KeyOutPoint],
+        version: Version,
+    ) -> Result<Vec<TransactionUTXOProofs>> {
         println!("[DEBUG] Generating UTXO inclusion proofs");
         let mut proofs = Vec::new();
 
@@ -181,11 +187,9 @@ impl RocksDbStorage {
                     Some(r) => r,
                     None => return Err(anyhow!("No root hash found")),
                 };
-                
+
                 let transaction_proof = TransactionUTXOProofs {
-                    update_proof: vec![Some((proof, utxo, root))]
-                        .into_iter()
-                        .collect(),
+                    update_proof: vec![Some((proof, utxo, root))].into_iter().collect(),
                     new_root: root,
                 };
                 proofs.push(transaction_proof);
@@ -199,7 +203,11 @@ impl RocksDbStorage {
     }
 
     /// Generates UTXO insertion proofs for a list of UTXO keys
-    pub fn generate_utxo_insertion_proofs(&self, utxo_keys: &[KeyOutPoint], version: Version) -> Result<Vec<UTXOInsertionProof>> {
+    pub fn generate_utxo_insertion_proofs(
+        &self,
+        utxo_keys: &[KeyOutPoint],
+        version: Version,
+    ) -> Result<Vec<UTXOInsertionProof>> {
         println!("[DEBUG] Generating UTXO insertion proofs");
         let mut proofs = Vec::new();
 
@@ -210,11 +218,10 @@ impl RocksDbStorage {
             if let Some(value) = value_opt {
                 // Convert SparseMerkleProof to UpdateMerkleProof
                 // This requires an additional call to get the update proof
-                let (new_root, update_proof, _) = self.get_jmt().put_value_set_with_proof(
-                    [(key_hash, Some(value.clone()))],
-                    version,
-                )?;
-                
+                let (new_root, update_proof, _) = self
+                    .get_jmt()
+                    .put_value_set_with_proof([(key_hash, Some(value.clone()))], version)?;
+
                 let insertion_proof = UTXOInsertionProof {
                     key: *utxo_key,
                     update_proof,

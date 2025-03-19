@@ -273,7 +273,10 @@ impl UTXOSetGuest {
         println!("[DEBUG] Updating JMT root and version");
         self.jmt_root = new_root;
         self.version = new_version;
-        println!("[DEBUG] Updated JMT Root: {:?}, Version: {:?}", self.jmt_root, self.version);
+        println!(
+            "[DEBUG] Updated JMT Root: {:?}, Version: {:?}",
+            self.jmt_root, self.version
+        );
     }
 
     /// Verify that a UTXO exists

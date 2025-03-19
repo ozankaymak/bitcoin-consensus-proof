@@ -94,7 +94,6 @@ impl BitcoinMerkleTree {
     // }
 
     /// Generate the Merkle root without storing the entire tree
-    /// This implementation uses constant memory regardless of input size
     pub fn generate_root(txids: Vec<[u8; 32]>) -> [u8; 32] {
         if txids.is_empty() {
             // Special case: empty merkle tree

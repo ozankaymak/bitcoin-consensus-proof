@@ -90,6 +90,7 @@ pub struct HeaderChainState {
     pub current_target_bits: u32,
     pub epoch_start_time: u32,
     pub prev_11_timestamps: [u32; 11],
+    pub block_time: u32,
 }
 
 impl HeaderChainState {
@@ -101,6 +102,7 @@ impl HeaderChainState {
             current_target_bits: NETWORK_PARAMS.max_bits,
             epoch_start_time: 0,
             prev_11_timestamps: [0u32; 11],
+            block_time: 0,
         }
     }
 
@@ -123,6 +125,7 @@ impl HeaderChainState {
         };
 
         self.block_height = self.block_height.wrapping_add(1);
+        self.block_time = block_header.time;
 
         let (target_to_use, expected_bits, work_to_add) = if IS_TESTNET4 {
             if block_header.time > last_block_time + 1200 {

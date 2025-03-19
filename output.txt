@@ -1,0 +1,307 @@
+[2m2025-03-19T14:29:13.902991Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Starting Bitcoin consensus proof generation
+[2m2025-03-19T14:29:13.903158Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Starting proof generation with parameters:
+[2m2025-03-19T14:29:13.903165Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Input proof: None
+[2m2025-03-19T14:29:13.903169Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Output file: data/proofs/testnet4_first_9.bin
+[2m2025-03-19T14:29:13.903173Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Batch size: 10
+[2m2025-03-19T14:29:13.903177Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Network: testnet4
+[2m2025-03-19T14:29:13.903210Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Using database at: data/utxo_db
+[2m2025-03-19T14:29:13.950872Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Computed guest program ID: [3179034316, 2384344162, 3688674165, 700869823, 864419901, 1738123469, 2548261505, 2516939433]
+[2m2025-03-19T14:29:13.950924Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Starting from genesis block
+[2m2025-03-19T14:29:13.950930Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Using genesis block as previous proof
+[2m2025-03-19T14:29:13.950932Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Processing block 0 (1 of 10)
+[2m2025-03-19T14:29:13.950936Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reading block from: data/blocks/testnet4-blocks/testnet4_block_0.bin
+[2m2025-03-19T14:29:13.950952Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Parsing block from file: data/blocks/testnet4-blocks/testnet4_block_0.bin
+[2m2025-03-19T14:29:13.951063Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Read 261 bytes from file
+[2m2025-03-19T14:29:13.951068Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block parsed successfully:
+[2m2025-03-19T14:29:13.951090Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Hash: 00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043
+[2m2025-03-19T14:29:13.951093Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(1)
+[2m2025-03-19T14:29:13.951096Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Previous block: 0000000000000000000000000000000000000000000000000000000000000000
+[2m2025-03-19T14:29:13.951099Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Merkle root: 7aa0a7ae1e223414cb807e40cd57e667b718e42aaf9306db9102fe28912b7b4e
+[2m2025-03-19T14:29:13.951102Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1714777860
+[2m2025-03-19T14:29:13.951104Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951106Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 393743547
+[2m2025-03-19T14:29:13.951109Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951116Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block details:
+[2m2025-03-19T14:29:13.951118Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(1)
+[2m2025-03-19T14:29:13.951120Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1714777860
+[2m2025-03-19T14:29:13.951122Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951125Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 393743547
+[2m2025-03-19T14:29:13.951127Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951144Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Processing transaction 1/1: 7aa0a7ae1e223414cb807e40cd57e667b718e42aaf9306db9102fe28912b7b4e
+[2m2025-03-19T14:29:13.951147Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Inputs: 1, Outputs: 1
+[2m2025-03-19T14:29:13.951149Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Skipping coinbase input 0
+[2m2025-03-19T14:29:13.951153Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [78, 123, 43, 145, 40, 254, 2, 145, 219, 6, 147, 175, 42, 228, 24, 183, 103, 230, 87, 205, 64, 126, 128, 203, 20, 52, 34, 30, 174, 167, 160, 122]:0 (5000000000 sats)
+[2m2025-03-19T14:29:13.951169Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Processing block 1 (2 of 10)
+[2m2025-03-19T14:29:13.951171Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reading block from: data/blocks/testnet4-blocks/testnet4_block_1.bin
+[2m2025-03-19T14:29:13.951185Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Parsing block from file: data/blocks/testnet4-blocks/testnet4_block_1.bin
+[2m2025-03-19T14:29:13.951213Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Read 258 bytes from file
+[2m2025-03-19T14:29:13.951232Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block parsed successfully:
+[2m2025-03-19T14:29:13.951235Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Hash: 0000000012982b6d5f621229286b880e909984df669c2afabb102ce311b13f28
+[2m2025-03-19T14:29:13.951237Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951239Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Previous block: 00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043
+[2m2025-03-19T14:29:13.951241Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Merkle root: 619c9db8597dc8aaaa37569e25930efa04c9aef7b604b1b8a26bd4f086b2785c
+[2m2025-03-19T14:29:13.951243Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715000928
+[2m2025-03-19T14:29:13.951245Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951247Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 2918744230
+[2m2025-03-19T14:29:13.951248Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951251Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block details:
+[2m2025-03-19T14:29:13.951253Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951255Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715000928
+[2m2025-03-19T14:29:13.951257Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951259Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 2918744230
+[2m2025-03-19T14:29:13.951261Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951264Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Processing transaction 1/1: 619c9db8597dc8aaaa37569e25930efa04c9aef7b604b1b8a26bd4f086b2785c
+[2m2025-03-19T14:29:13.951266Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Inputs: 1, Outputs: 2
+[2m2025-03-19T14:29:13.951268Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Skipping coinbase input 0
+[2m2025-03-19T14:29:13.951271Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [92, 120, 178, 134, 240, 212, 107, 162, 184, 177, 4, 182, 247, 174, 201, 4, 250, 14, 147, 37, 158, 86, 55, 170, 170, 200, 125, 89, 184, 157, 156, 97]:0 (5000000000 sats)
+[2m2025-03-19T14:29:13.951273Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [92, 120, 178, 134, 240, 212, 107, 162, 184, 177, 4, 182, 247, 174, 201, 4, 250, 14, 147, 37, 158, 86, 55, 170, 170, 200, 125, 89, 184, 157, 156, 97]:1 (0 sats)
+[2m2025-03-19T14:29:13.951276Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Processing block 2 (3 of 10)
+[2m2025-03-19T14:29:13.951278Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reading block from: data/blocks/testnet4-blocks/testnet4_block_2.bin
+[2m2025-03-19T14:29:13.951280Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Parsing block from file: data/blocks/testnet4-blocks/testnet4_block_2.bin
+[2m2025-03-19T14:29:13.951306Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Read 258 bytes from file
+[2m2025-03-19T14:29:13.951310Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block parsed successfully:
+[2m2025-03-19T14:29:13.951312Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Hash: 000000001fed1a914651afc36574003c5300cac5df738c3976f28d54f7096253
+[2m2025-03-19T14:29:13.951314Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951316Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Previous block: 0000000012982b6d5f621229286b880e909984df669c2afabb102ce311b13f28
+[2m2025-03-19T14:29:13.951318Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Merkle root: a1da19ec25c08335d0297faeeaf63e42ab03e921cbd913c2fa52fdab7ebf9b49
+[2m2025-03-19T14:29:13.951320Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715000942
+[2m2025-03-19T14:29:13.951326Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951328Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 274284380
+[2m2025-03-19T14:29:13.951329Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951332Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block details:
+[2m2025-03-19T14:29:13.951334Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951336Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715000942
+[2m2025-03-19T14:29:13.951338Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951339Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 274284380
+[2m2025-03-19T14:29:13.951341Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951344Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Processing transaction 1/1: a1da19ec25c08335d0297faeeaf63e42ab03e921cbd913c2fa52fdab7ebf9b49
+[2m2025-03-19T14:29:13.951347Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Inputs: 1, Outputs: 2
+[2m2025-03-19T14:29:13.951348Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Skipping coinbase input 0
+[2m2025-03-19T14:29:13.951351Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [73, 155, 191, 126, 171, 253, 82, 250, 194, 19, 217, 203, 33, 233, 3, 171, 66, 62, 246, 234, 174, 127, 41, 208, 53, 131, 192, 37, 236, 25, 218, 161]:0 (5000000000 sats)
+[2m2025-03-19T14:29:13.951354Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [73, 155, 191, 126, 171, 253, 82, 250, 194, 19, 217, 203, 33, 233, 3, 171, 66, 62, 246, 234, 174, 127, 41, 208, 53, 131, 192, 37, 236, 25, 218, 161]:1 (0 sats)
+[2m2025-03-19T14:29:13.951357Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Processing block 3 (4 of 10)
+[2m2025-03-19T14:29:13.951359Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reading block from: data/blocks/testnet4-blocks/testnet4_block_3.bin
+[2m2025-03-19T14:29:13.951361Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Parsing block from file: data/blocks/testnet4-blocks/testnet4_block_3.bin
+[2m2025-03-19T14:29:13.951387Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Read 258 bytes from file
+[2m2025-03-19T14:29:13.951390Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block parsed successfully:
+[2m2025-03-19T14:29:13.951392Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Hash: 000000008ddb4258595f9d8079a0b83fdc2816c9e3511acc739c16f5bce14e56
+[2m2025-03-19T14:29:13.951395Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951396Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Previous block: 000000001fed1a914651afc36574003c5300cac5df738c3976f28d54f7096253
+[2m2025-03-19T14:29:13.951398Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Merkle root: 8f30eb045ffd5fe0192305fc2f3ef54cc17cf42befb582a02ded44cd2bde73cd
+[2m2025-03-19T14:29:13.951401Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001015
+[2m2025-03-19T14:29:13.951402Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951404Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 1815631976
+[2m2025-03-19T14:29:13.951406Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951409Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block details:
+[2m2025-03-19T14:29:13.951411Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951412Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001015
+[2m2025-03-19T14:29:13.951414Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951416Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 1815631976
+[2m2025-03-19T14:29:13.951418Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951421Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Processing transaction 1/1: 8f30eb045ffd5fe0192305fc2f3ef54cc17cf42befb582a02ded44cd2bde73cd
+[2m2025-03-19T14:29:13.951426Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Inputs: 1, Outputs: 2
+[2m2025-03-19T14:29:13.951429Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Skipping coinbase input 0
+[2m2025-03-19T14:29:13.951431Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [205, 115, 222, 43, 205, 68, 237, 45, 160, 130, 181, 239, 43, 244, 124, 193, 76, 245, 62, 47, 252, 5, 35, 25, 224, 95, 253, 95, 4, 235, 48, 143]:0 (5000000000 sats)
+[2m2025-03-19T14:29:13.951434Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [205, 115, 222, 43, 205, 68, 237, 45, 160, 130, 181, 239, 43, 244, 124, 193, 76, 245, 62, 47, 252, 5, 35, 25, 224, 95, 253, 95, 4, 235, 48, 143]:1 (0 sats)
+[2m2025-03-19T14:29:13.951436Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Processing block 4 (5 of 10)
+[2m2025-03-19T14:29:13.951438Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reading block from: data/blocks/testnet4-blocks/testnet4_block_4.bin
+[2m2025-03-19T14:29:13.951440Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Parsing block from file: data/blocks/testnet4-blocks/testnet4_block_4.bin
+[2m2025-03-19T14:29:13.951463Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Read 258 bytes from file
+[2m2025-03-19T14:29:13.951466Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block parsed successfully:
+[2m2025-03-19T14:29:13.951469Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Hash: 000000008f5794caa45c418a0184303e848e9d6756e4d77234c9aada983b4265
+[2m2025-03-19T14:29:13.951471Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951472Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Previous block: 000000008ddb4258595f9d8079a0b83fdc2816c9e3511acc739c16f5bce14e56
+[2m2025-03-19T14:29:13.951474Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Merkle root: 972e535a37eced8889ba9f397da4c83d45399c27893ff08b180327f315e53ddd
+[2m2025-03-19T14:29:13.951476Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001023
+[2m2025-03-19T14:29:13.951478Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951480Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 3206976184
+[2m2025-03-19T14:29:13.951482Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951484Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block details:
+[2m2025-03-19T14:29:13.951486Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951487Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001023
+[2m2025-03-19T14:29:13.951489Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951491Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 3206976184
+[2m2025-03-19T14:29:13.951493Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951496Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Processing transaction 1/1: 972e535a37eced8889ba9f397da4c83d45399c27893ff08b180327f315e53ddd
+[2m2025-03-19T14:29:13.951498Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Inputs: 1, Outputs: 2
+[2m2025-03-19T14:29:13.951500Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Skipping coinbase input 0
+[2m2025-03-19T14:29:13.951502Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [221, 61, 229, 21, 243, 39, 3, 24, 139, 240, 63, 137, 39, 156, 57, 69, 61, 200, 164, 125, 57, 159, 186, 137, 136, 237, 236, 55, 90, 83, 46, 151]:0 (5000000000 sats)
+[2m2025-03-19T14:29:13.951505Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [221, 61, 229, 21, 243, 39, 3, 24, 139, 240, 63, 137, 39, 156, 57, 69, 61, 200, 164, 125, 57, 159, 186, 137, 136, 237, 236, 55, 90, 83, 46, 151]:1 (0 sats)
+[2m2025-03-19T14:29:13.951508Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Processing block 5 (6 of 10)
+[2m2025-03-19T14:29:13.951510Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reading block from: data/blocks/testnet4-blocks/testnet4_block_5.bin
+[2m2025-03-19T14:29:13.951512Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Parsing block from file: data/blocks/testnet4-blocks/testnet4_block_5.bin
+[2m2025-03-19T14:29:13.951541Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Read 258 bytes from file
+[2m2025-03-19T14:29:13.951544Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block parsed successfully:
+[2m2025-03-19T14:29:13.951546Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Hash: 00000000ccefd2182ad4bb311c866233d32aae0a85f9568588ffd8e0432b7355
+[2m2025-03-19T14:29:13.951548Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951550Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Previous block: 000000008f5794caa45c418a0184303e848e9d6756e4d77234c9aada983b4265
+[2m2025-03-19T14:29:13.951552Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Merkle root: 285abf38807a7ebd0c7578cb84f436265149bd59f358aeb23ae3ee1c91c43fb1
+[2m2025-03-19T14:29:13.951554Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001040
+[2m2025-03-19T14:29:13.951556Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951557Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 698672855
+[2m2025-03-19T14:29:13.951559Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951562Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block details:
+[2m2025-03-19T14:29:13.951563Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951565Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001040
+[2m2025-03-19T14:29:13.951567Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951569Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 698672855
+[2m2025-03-19T14:29:13.951570Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951573Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Processing transaction 1/1: 285abf38807a7ebd0c7578cb84f436265149bd59f358aeb23ae3ee1c91c43fb1
+[2m2025-03-19T14:29:13.951575Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Inputs: 1, Outputs: 2
+[2m2025-03-19T14:29:13.951577Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Skipping coinbase input 0
+[2m2025-03-19T14:29:13.951579Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [177, 63, 196, 145, 28, 238, 227, 58, 178, 174, 88, 243, 89, 189, 73, 81, 38, 54, 244, 132, 203, 120, 117, 12, 189, 126, 122, 128, 56, 191, 90, 40]:0 (5000000000 sats)
+[2m2025-03-19T14:29:13.951582Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [177, 63, 196, 145, 28, 238, 227, 58, 178, 174, 88, 243, 89, 189, 73, 81, 38, 54, 244, 132, 203, 120, 117, 12, 189, 126, 122, 128, 56, 191, 90, 40]:1 (0 sats)
+[2m2025-03-19T14:29:13.951585Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Processing block 6 (7 of 10)
+[2m2025-03-19T14:29:13.951587Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reading block from: data/blocks/testnet4-blocks/testnet4_block_6.bin
+[2m2025-03-19T14:29:13.951589Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Parsing block from file: data/blocks/testnet4-blocks/testnet4_block_6.bin
+[2m2025-03-19T14:29:13.951612Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Read 258 bytes from file
+[2m2025-03-19T14:29:13.951614Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block parsed successfully:
+[2m2025-03-19T14:29:13.951617Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Hash: 00000000ce4aa057b63710c3b986112392367a732449e329315d76ecf453b07a
+[2m2025-03-19T14:29:13.951619Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951621Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Previous block: 00000000ccefd2182ad4bb311c866233d32aae0a85f9568588ffd8e0432b7355
+[2m2025-03-19T14:29:13.951623Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Merkle root: a1a1def885c4e7e44221fe7e4aa255e104b8b32a565047a0bb869f7c07a1e3e3
+[2m2025-03-19T14:29:13.951625Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001071
+[2m2025-03-19T14:29:13.951626Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951628Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 1977828387
+[2m2025-03-19T14:29:13.951633Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951635Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block details:
+[2m2025-03-19T14:29:13.951637Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951639Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001071
+[2m2025-03-19T14:29:13.951640Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951642Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 1977828387
+[2m2025-03-19T14:29:13.951644Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951647Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Processing transaction 1/1: a1a1def885c4e7e44221fe7e4aa255e104b8b32a565047a0bb869f7c07a1e3e3
+[2m2025-03-19T14:29:13.951649Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Inputs: 1, Outputs: 2
+[2m2025-03-19T14:29:13.951651Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Skipping coinbase input 0
+[2m2025-03-19T14:29:13.951653Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [227, 227, 161, 7, 124, 159, 134, 187, 160, 71, 80, 86, 42, 179, 184, 4, 225, 85, 162, 74, 126, 254, 33, 66, 228, 231, 196, 133, 248, 222, 161, 161]:0 (5000000000 sats)
+[2m2025-03-19T14:29:13.951656Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [227, 227, 161, 7, 124, 159, 134, 187, 160, 71, 80, 86, 42, 179, 184, 4, 225, 85, 162, 74, 126, 254, 33, 66, 228, 231, 196, 133, 248, 222, 161, 161]:1 (0 sats)
+[2m2025-03-19T14:29:13.951658Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Processing block 7 (8 of 10)
+[2m2025-03-19T14:29:13.951660Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reading block from: data/blocks/testnet4-blocks/testnet4_block_7.bin
+[2m2025-03-19T14:29:13.951662Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Parsing block from file: data/blocks/testnet4-blocks/testnet4_block_7.bin
+[2m2025-03-19T14:29:13.951688Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Read 258 bytes from file
+[2m2025-03-19T14:29:13.951691Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block parsed successfully:
+[2m2025-03-19T14:29:13.951693Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Hash: 000000006da1338609eab6ea33c96a767b1654e1662c9c9216e102d535007ae8
+[2m2025-03-19T14:29:13.951695Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951697Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Previous block: 00000000ce4aa057b63710c3b986112392367a732449e329315d76ecf453b07a
+[2m2025-03-19T14:29:13.951699Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Merkle root: cee55da7cf98bec1eae90e659440d3147af7039ce44d89036b52d726af2ee9fb
+[2m2025-03-19T14:29:13.951701Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001166
+[2m2025-03-19T14:29:13.951703Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951704Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 3822287225
+[2m2025-03-19T14:29:13.951706Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951708Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block details:
+[2m2025-03-19T14:29:13.951710Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951712Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001166
+[2m2025-03-19T14:29:13.951714Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951715Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 3822287225
+[2m2025-03-19T14:29:13.951717Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951720Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Processing transaction 1/1: cee55da7cf98bec1eae90e659440d3147af7039ce44d89036b52d726af2ee9fb
+[2m2025-03-19T14:29:13.951722Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Inputs: 1, Outputs: 2
+[2m2025-03-19T14:29:13.951724Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Skipping coinbase input 0
+[2m2025-03-19T14:29:13.951729Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [251, 233, 46, 175, 38, 215, 82, 107, 3, 137, 77, 228, 156, 3, 247, 122, 20, 211, 64, 148, 101, 14, 233, 234, 193, 190, 152, 207, 167, 93, 229, 206]:0 (5000000000 sats)
+[2m2025-03-19T14:29:13.951732Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [251, 233, 46, 175, 38, 215, 82, 107, 3, 137, 77, 228, 156, 3, 247, 122, 20, 211, 64, 148, 101, 14, 233, 234, 193, 190, 152, 207, 167, 93, 229, 206]:1 (0 sats)
+[2m2025-03-19T14:29:13.951734Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Processing block 8 (9 of 10)
+[2m2025-03-19T14:29:13.951736Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reading block from: data/blocks/testnet4-blocks/testnet4_block_8.bin
+[2m2025-03-19T14:29:13.951738Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Parsing block from file: data/blocks/testnet4-blocks/testnet4_block_8.bin
+[2m2025-03-19T14:29:13.951766Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Read 258 bytes from file
+[2m2025-03-19T14:29:13.951769Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block parsed successfully:
+[2m2025-03-19T14:29:13.951772Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Hash: 0000000032a6646a8daa73ee17a4bcd96617af516bfc00531c5dd1d8c75a719d
+[2m2025-03-19T14:29:13.951774Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951775Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Previous block: 000000006da1338609eab6ea33c96a767b1654e1662c9c9216e102d535007ae8
+[2m2025-03-19T14:29:13.951777Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Merkle root: 4e41bd0f95747539b7e9f4e01b23121a1c5fbcf3a2b4791a77384a24f5d1da10
+[2m2025-03-19T14:29:13.951779Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001218
+[2m2025-03-19T14:29:13.951781Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951783Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 1869182576
+[2m2025-03-19T14:29:13.951784Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951787Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block details:
+[2m2025-03-19T14:29:13.951788Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951790Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001218
+[2m2025-03-19T14:29:13.951792Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951794Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 1869182576
+[2m2025-03-19T14:29:13.951795Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951799Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Processing transaction 1/1: 4e41bd0f95747539b7e9f4e01b23121a1c5fbcf3a2b4791a77384a24f5d1da10
+[2m2025-03-19T14:29:13.951801Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Inputs: 1, Outputs: 2
+[2m2025-03-19T14:29:13.951802Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Skipping coinbase input 0
+[2m2025-03-19T14:29:13.951805Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [16, 218, 209, 245, 36, 74, 56, 119, 26, 121, 180, 162, 243, 188, 95, 28, 26, 18, 35, 27, 224, 244, 233, 183, 57, 117, 116, 149, 15, 189, 65, 78]:0 (5000000000 sats)
+[2m2025-03-19T14:29:13.951808Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [16, 218, 209, 245, 36, 74, 56, 119, 26, 121, 180, 162, 243, 188, 95, 28, 26, 18, 35, 27, 224, 244, 233, 183, 57, 117, 116, 149, 15, 189, 65, 78]:1 (0 sats)
+[2m2025-03-19T14:29:13.951811Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Processing block 9 (10 of 10)
+[2m2025-03-19T14:29:13.951813Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reading block from: data/blocks/testnet4-blocks/testnet4_block_9.bin
+[2m2025-03-19T14:29:13.951814Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Parsing block from file: data/blocks/testnet4-blocks/testnet4_block_9.bin
+[2m2025-03-19T14:29:13.951838Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Read 258 bytes from file
+[2m2025-03-19T14:29:13.951843Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block parsed successfully:
+[2m2025-03-19T14:29:13.951846Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Hash: 00000000b2cf8b5f5add43d01c10c733d9692a791d929d1255d11273fcf16c59
+[2m2025-03-19T14:29:13.951848Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951850Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Previous block: 0000000032a6646a8daa73ee17a4bcd96617af516bfc00531c5dd1d8c75a719d
+[2m2025-03-19T14:29:13.951852Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Merkle root: 13242aad91eb9605e20f44e19ea1ff065014530dc10b6dcc626514cc99641417
+[2m2025-03-19T14:29:13.951854Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001242
+[2m2025-03-19T14:29:13.951855Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951857Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 4107984219
+[2m2025-03-19T14:29:13.951859Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951862Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block details:
+[2m2025-03-19T14:29:13.951864Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: Version(536870912)
+[2m2025-03-19T14:29:13.951865Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Timestamp: 1715001242
+[2m2025-03-19T14:29:13.951867Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Bits: CompactTarget(486604799)
+[2m2025-03-19T14:29:13.951869Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Nonce: 4107984219
+[2m2025-03-19T14:29:13.951871Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Transaction count: 1
+[2m2025-03-19T14:29:13.951874Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Processing transaction 1/1: 13242aad91eb9605e20f44e19ea1ff065014530dc10b6dcc626514cc99641417
+[2m2025-03-19T14:29:13.951876Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Inputs: 1, Outputs: 2
+[2m2025-03-19T14:29:13.951878Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Skipping coinbase input 0
+[2m2025-03-19T14:29:13.951880Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [23, 20, 100, 153, 204, 20, 101, 98, 204, 109, 11, 193, 13, 83, 20, 80, 6, 255, 161, 158, 225, 68, 15, 226, 5, 150, 235, 145, 173, 42, 36, 19]:0 (5000000000 sats)
+[2m2025-03-19T14:29:13.951882Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Added new UTXO: [23, 20, 100, 153, 204, 20, 101, 98, 204, 109, 11, 193, 13, 83, 20, 80, 6, 255, 161, 158, 225, 68, 15, 226, 5, 150, 235, 145, 173, 42, 36, 19]:1 (0 sats)
+[2m2025-03-19T14:29:13.951897Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Preparing circuit input:
+[2m2025-03-19T14:29:13.951899Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Number of blocks: 10
+[2m2025-03-19T14:29:13.951901Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Number of UTXO updates: 19
+[2m2025-03-19T14:29:13.951902Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Previous proof type: GenesisBlock
+[2m2025-03-19T14:29:13.951905Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Building executor environment
+[2m2025-03-19T14:29:13.952031Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Creating prover
+[2m2025-03-19T14:29:13.952058Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Starting proof generation
+[DEBUG] Starting bitcoin_consensus_circuit at cycle 258
+[DEBUG] Reading input from host
+[DEBUG] Input read: method_id: [3179034316, 2384344162, 3688674165, 700869823, 864419901, 1738123469, 2548261505, 2516939433], blocks: 10
+[DEBUG] Number of UTXO inclusion proofs: 0
+[DEBUG] Number of UTXO insertion proofs: 0
+[DEBUG] Creating new BitcoinState from GenesisBlock
+[DEBUG] Creating new BitcoinState
+[DEBUG] Verifying and applying blocks
+[INFO] Starting block verification and application. Processing 10 blocks
+[INFO] Initial state - Block height: 4294967295, JMT root: RootHash("0000000000000000000000000000000000000000000000000000000000000000"), UTXO cache size: 0
+[INFO] All blocks processed. Processing 0 UTXO insertion proofs
+[INFO] Current JMT state - Root: RootHash("0000000000000000000000000000000000000000000000000000000000000000"), Version: 0, Cache size: 0
+[INFO] Verifying cache is empty. Current size: 0
+[INFO] All UTXO operations completed successfully
+[DEBUG] All blocks verified and applied
+[DEBUG] Committing BitcoinConsensusCircuitOutput
+[DEBUG] Final block height: 4294967295
+[DEBUG] Final JMT root: RootHash("0000000000000000000000000000000000000000000000000000000000000000")
+[DEBUG] Output committed
+[DEBUG] Bitcoin consensus circuit completed in 100428 cycles
+[2m2025-03-19T14:29:13.995606Z[0m [32m INFO[0m [2mrisc0_zkvm::host::server::exec::executor[0m[2m:[0m execution time: 5.211083ms
+[2m2025-03-19T14:29:18.544507Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Proof generation completed:
+[2m2025-03-19T14:29:18.544537Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Total cycles: 262144
+[2m2025-03-19T14:29:18.544542Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   User cycles: 104278
+[2m2025-03-19T14:29:18.544545Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Paging cycles: 152480
+[2m2025-03-19T14:29:18.544548Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Reserved cycles: 5386
+[2m2025-03-19T14:29:18.544551Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Number of segments: 1
+[2m2025-03-19T14:29:18.544554Z[0m [32m INFO[0m [2mhost[0m[2m:[0m New Receipt Journal: Journal { bytes: [204, 54, 124, 189, 98, 52, 30, 142, 117, 179, 220, 219, 191, 108, 198, 41, 61, 0, 134, 51, 205, 168, 153, 103, 129, 98, 227, 151, 169, 114, 5, 150, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 0, 29, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }
+[2m2025-03-19T14:29:18.544573Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Circuit output details:
+[2m2025-03-19T14:29:18.544576Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Method ID: [3179034316, 2384344162, 3688674165, 700869823, 864419901, 1738123469, 2548261505, 2516939433]
+[2m2025-03-19T14:29:18.544579Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Block height: 4294967295
+[2m2025-03-19T14:29:18.544581Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   JMT Root: RootHash("0000000000000000000000000000000000000000000000000000000000000000")
+[2m2025-03-19T14:29:18.544586Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Updating local UTXO set with 19 changes
+[2m2025-03-19T14:29:18.544602Z[0m [32m INFO[0m [2mhost[0m[2m:[0m Updating UTXO set with 19 changes
+[2m2025-03-19T14:29:18.544610Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Database path: data/utxo_db
+[2m2025-03-19T14:29:18.552969Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Current JMT State:
+[2m2025-03-19T14:29:18.552983Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Root: RootHash("5f166481cba8349daeba4d6bc45549c312720996144dac985fa0dc107ee13d14")
+[2m2025-03-19T14:29:18.552988Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Version: 1
+[2m2025-03-19T14:29:18.552991Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Root hash bytes: [95, 22, 100, 129, 203, 168, 52, 157, 174, 186, 77, 107, 196, 85, 73, 195, 18, 114, 9, 150, 20, 77, 172, 152, 95, 160, 220, 16, 126, 225, 61, 20]
+[2m2025-03-19T14:29:18.552995Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Converting updates to JMT format...
+[2m2025-03-19T14:29:18.553005Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Update details:
+[2m2025-03-19T14:29:18.553008Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Total updates: 19
+[2m2025-03-19T14:29:18.553010Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Deletions: 0
+[2m2025-03-19T14:29:18.553012Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     Insertions: 19
+[2m2025-03-19T14:29:18.553014Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Applying updates to JMT...
+[2m2025-03-19T14:29:18.553253Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   JMT Update Results:
+[2m2025-03-19T14:29:18.553259Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     New root: RootHash("5f166481cba8349daeba4d6bc45549c312720996144dac985fa0dc107ee13d14")
+[2m2025-03-19T14:29:18.553270Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     New root hash bytes: [95, 22, 100, 129, 203, 168, 52, 157, 174, 186, 77, 107, 196, 85, 73, 195, 18, 114, 9, 150, 20, 77, 172, 152, 95, 160, 220, 16, 126, 225, 61, 20]
+[2m2025-03-19T14:29:18.553273Z[0m [32m INFO[0m [2mhost[0m[2m:[0m     New version: 2
+[2m2025-03-19T14:29:18.553275Z[0m [32m INFO[0m [2mhost[0m[2m:[0m   Storing updates in database...
+Error: Unexpected length of input

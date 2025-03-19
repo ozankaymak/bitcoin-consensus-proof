@@ -105,6 +105,37 @@ impl RocksDbStorage {
         self.store_latest_root(root_hash)?;
         Ok(())
     }
+
+    /// Get the latest version of the tree
+    pub fn get_latest_version(&self) -> Result<Version> {
+        let cf = self
+            .db
+            .cf_handle(METADATA_CF)
+            .ok_or_else(|| anyhow!("Column family '{}' not found", METADATA_CF))?;
+
+        if let Some(bytes) = self.db.get_cf(cf, LATEST_VERSION_KEY)? {
+            let version: [u8; 8] = bytes
+                .try_into()
+                .map_err(|_| anyhow!("Invalid version format"))?;
+            Ok(u64::from_be_bytes(version))
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Store the latest version
+    pub fn store_latest_version(&self, version: Version) -> Result<()> {
+        let cf = self
+            .db
+            .cf_handle(METADATA_CF)
+            .ok_or_else(|| anyhow!("Column family '{}' not found", METADATA_CF))?;
+
+        self.db
+            .put_cf(cf, LATEST_VERSION_KEY, version.to_be_bytes().to_vec())
+            .context("Failed to store latest version")?;
+
+        Ok(())
+    }
 }
 
 impl TreeReader for RocksDbStorage {

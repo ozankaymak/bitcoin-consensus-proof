@@ -1,5 +1,5 @@
 use bitcoin::hashes::Hash;
-use bitcoin::{Amount, OutPoint, Txid};
+use bitcoin::{Amount, OutPoint, ScriptBuf, Txid};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -30,6 +30,7 @@ pub struct UTXOSetGuest {
     Deserialize,
     Eq,
     PartialEq,
+    Copy,
     Clone,
     Debug,
     BorshDeserialize,
@@ -74,17 +75,31 @@ impl AsRef<[u8]> for OutPointBytes {
 pub struct UTXO {
     pub value: u64,             // Amount in satoshis
     pub block_height: u32,      // Block height where this UTXO was created
+    pub block_time: u32,        // Block time where this UTXO was created
     pub is_coinbase: bool,      // Whether this UTXO is from a coinbase transaction
     pub script_pubkey: Vec<u8>, // Output script
 }
 
 impl UTXO {
-    pub fn from_txout(txout: &bitcoin::TxOut, block_height: u32, is_coinbase: bool) -> Self {
+    pub fn from_txout(
+        txout: &bitcoin::TxOut,
+        block_height: u32,
+        block_time: u32,
+        is_coinbase: bool,
+    ) -> Self {
         UTXO {
             value: Amount::to_sat(txout.value),
             block_height,
+            block_time,
             is_coinbase,
             script_pubkey: txout.script_pubkey.to_bytes().to_vec(),
+        }
+    }
+
+    pub fn into_txout(&self) -> bitcoin::TxOut {
+        bitcoin::TxOut {
+            value: Amount::from_sat(self.value),
+            script_pubkey: ScriptBuf::from_bytes(self.script_pubkey.clone()),
         }
     }
 }
@@ -172,13 +187,15 @@ impl UTXO {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let value = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
         let block_height = u32::from_be_bytes(bytes[8..12].try_into().unwrap());
-        let is_coinbase = bytes[12] == 1;
-        let script_pubkey = bytes[13..].to_vec();
+        let block_time = u32::from_be_bytes(bytes[12..16].try_into().unwrap());
+        let is_coinbase = bytes[17] == 1;
+        let script_pubkey = bytes[17..].to_vec();
 
         UTXO {
             value,
             script_pubkey,
             block_height,
+            block_time,
             is_coinbase,
         }
     }
@@ -252,6 +269,7 @@ impl UTXOSetGuest {
         &mut self,
         transaction: &CircuitTransaction,
         block_height: u32,
+        block_time: u32,
         is_coinbase: bool,
     ) {
         let txid = transaction.txid();
@@ -266,6 +284,7 @@ impl UTXOSetGuest {
                 value: output.value.to_sat(),
                 script_pubkey: output.script_pubkey.as_bytes().to_vec(),
                 block_height,
+                block_time,
                 is_coinbase,
             };
 
@@ -419,6 +438,7 @@ impl UTXOSetGuest {
         &mut self,
         transaction: &CircuitTransaction,
         block_height: u32,
+        block_time: u32,
         is_coinbase: bool,
     ) {
         let txid = transaction.txid();
@@ -433,6 +453,7 @@ impl UTXOSetGuest {
                 value: output.value.to_sat(),
                 script_pubkey: output.script_pubkey.as_bytes().to_vec(),
                 block_height,
+                block_time,
                 is_coinbase,
             };
 

@@ -11,8 +11,16 @@ use serde::{Deserialize, Serialize};
 ///
 use std::ops::{Deref, DerefMut};
 
-use crate::constants::{SEGWIT_FLAG, SEGWIT_MARKER};
+use crate::constants::{LOCKTIME_THRESHOLD, SEGWIT_FLAG, SEGWIT_MARKER};
 use crate::hashes::calculate_double_sha256;
+use crate::header_chain::CircuitBlockHeader;
+
+// Constants for sequence locktime (BIP68)
+const LOCKTIME_VERIFY_SEQUENCE: u32 = 0x00000080;
+const SEQUENCE_LOCKTIME_GRANULARITY: u8 = 9;
+const SEQUENCE_LOCKTIME_DISABLED: u32 = 0x80000000;
+const SEQUENCE_LOCKTIME_TYPE_FLAG: u32 = 0x00400000;
+const SEQUENCE_LOCKTIME_MASK: u32 = 0x0000FFFF;
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct CircuitTransaction(pub Transaction);
@@ -95,65 +103,152 @@ impl CircuitTransaction {
             .any(|input| !input.witness.is_empty())
     }
 
-    // /// This is not to validate, just to check if the transaction is a candidate coinbase transaction
-    // pub fn is_coinbase(&self) -> bool {
-    //     self.inner().input.len() == 1
-    //         && self.inner().input[0].previous_output.is_null()
-    //         // is_null() means
-    //         // self.inner().input[0].previous_output.txid == bitcoin::Txid::from_byte_array([0; 32])
-    //         // && self.inner().input[0].previous_output.vout == 0xFFFFFFFF
-    // }
+    /// Determines if transaction is final using Bitcoin Core's IsFinalTx logic
+    pub fn is_final_tx(&self, block_height: i32, block_time: i64) -> bool {
+        // If nLockTime is 0, transaction is final
+        if self.0.lock_time.to_consensus_u32() == 0 {
+            return true;
+        }
 
-    // /// This is for the coinbase transaction only
-    // pub fn get_claimed_block_reward(&self) -> Amount {
-    //     let mut reward = Amount::from_sat(0);
-    //     for output in &self.output {
-    //         reward += output.value;
-    //     }
-    //     reward
+        // Otherwise check if lock time is satisfied by height/time
+        let lock_time_u32 = self.0.lock_time.to_consensus_u32();
+        let lock_time_i64 = lock_time_u32 as i64;
 
-    // }
+        // Check if locktime is satisfied
+        if (lock_time_u32 < LOCKTIME_THRESHOLD && lock_time_i64 < block_height as i64)
+            || (lock_time_u32 >= LOCKTIME_THRESHOLD && lock_time_i64 < block_time)
+        {
+            return true;
+        }
 
-    // /// This is for the coinbase transaction only
-    // pub fn get_bip34_block_height(&self) -> u32 {
-    //     // Extract and verify block height from coinbase script
-    //     let coinbase_script = &self.input[0].script_sig.as_bytes();
-    //     assert!(!coinbase_script.is_empty(), "Coinbase script cannot be empty");
+        // Transaction is still considered final if all inputs have SEQUENCE_FINAL
+        for txin in &self.0.input {
+            if txin.sequence != Sequence::MAX {
+                return false;
+            }
+        }
 
-    //     // First byte must be length of height serialization
-    //     let height_len = coinbase_script[0] as usize;
-    //     assert!(height_len >= 1 && height_len <= 5, "Invalid height length in coinbase");
-    //     assert!(coinbase_script.len() > height_len, "Coinbase script too short");
+        true
+    }
 
-    //     // Extract the height bytes
-    //     let height_bytes = &coinbase_script[1..=height_len];
-    //     let mut height_value = 0u32;
+    /// Calculate sequence locks based on BIP68
+    pub fn calculate_sequence_locks(
+        &self,
+        flags: u32,
+        prev_heights: &mut Vec<i32>,
+        block: &CircuitBlockHeader,
+    ) -> (i32, i64) {
+        assert_eq!(prev_heights.len(), self.0.input.len());
 
-    //     // Parse little-endian encoded height
-    //     for (i, &byte) in height_bytes.iter().enumerate() {
-    //         height_value |= (byte as u32) << (8 * i);
-    //     }
+        // Will be set to the equivalent height- and time-based nLockTime
+        // values that would be necessary to satisfy all relative lock-
+        // time constraints given our view of block chain history.
+        // The semantics of nLockTime are the last invalid height/time, so
+        // use -1 to have the effect of any height or time being valid.
+        let mut min_height = -1;
+        let mut min_time = -1;
 
-    //     // assert_eq!(height_value, block_height, "Block height mismatch in coinbase script");
-    //     height_value
-    // }
+        // BIP68 only applies to transactions version 2 or higher
+        let enforce_bip68 = self.0.version.0 >= 2 && flags & LOCKTIME_VERIFY_SEQUENCE != 0;
 
-    // /// This is for the coinbase transaction only
-    // pub fn get_witness_commitment_hash(&self) -> [u8; 32] {
-    //     if !self.is_coinbase() {
-    //         panic!("Only coinbase transactions can have a witness commitment hash");
-    //     }
-    //     for output in &self.output {
-    //         if output.script_pubkey.is_op_return() {
-    //             if output.script_pubkey.len() < 38 {
-    //                 panic!("Witness commitment hash is too short");
-    //             }
-    //             assert_eq!(MAGIC_BYTES, output.script_pubkey.as_bytes()[2..6], "Invalid magic bytes (witness commitment prefix)");
-    //             return output.script_pubkey.as_bytes()[6..38].try_into().unwrap();
-    //         }
-    //     }
-    //     panic!("No witness commitment hash found in coinbase transaction"); // TODO: Some blocks do not have a witness commitment hash, so this should be handled more gracefully
-    // }
+        // Do not enforce sequence numbers as a relative lock time
+        // unless we have been instructed to
+        if !enforce_bip68 {
+            return (min_height, min_time);
+        }
+
+        for (txin_index, txin) in self.0.input.iter().enumerate() {
+            // Sequence numbers with the most significant bit set are not
+            // treated as relative lock-times, nor are they given any
+            // consensus-enforced meaning at this point.
+            if (txin.sequence.0 & SEQUENCE_LOCKTIME_DISABLED) != 0 {
+                // The height of this input is not relevant for sequence locks
+                prev_heights[txin_index] = 0;
+                continue;
+            }
+
+            let coin_height = prev_heights[txin_index];
+
+            // Check if this is a time-based relative lock time
+            if (txin.sequence.0 & SEQUENCE_LOCKTIME_TYPE_FLAG) != 0 {
+                // Time-based relative lock-times are measured from the
+                // smallest allowed timestamp of the block containing the
+                // txout being spent, which is the median time past of the
+                // block prior.
+                let coin_time =
+                    get_median_time_past_for_height(block, std::cmp::max(coin_height - 1, 0));
+
+                // NOTE: Subtract 1 to maintain nLockTime semantics
+                // BIP 68 relative lock times have the semantics of calculating
+                // the first block or time at which the transaction would be
+                // valid. When calculating the effective block time or height
+                // for the entire transaction, we switch to using the
+                // semantics of nLockTime which is the last invalid block
+                // time or height. Thus we subtract 1 from the calculated
+                // time or height.
+                let sequence_locked_seconds =
+                    (txin.sequence.0 & SEQUENCE_LOCKTIME_MASK) << SEQUENCE_LOCKTIME_GRANULARITY;
+                let new_min_time = coin_time + (sequence_locked_seconds as i64) - 1;
+                min_time = std::cmp::max(min_time, new_min_time);
+            } else {
+                // Height-based relative lock time
+                // NOTE: Subtract 1 to maintain nLockTime semantics
+                let sequence_locked_height = (txin.sequence.0 & SEQUENCE_LOCKTIME_MASK) as i32;
+                let new_min_height = coin_height + sequence_locked_height - 1;
+                min_height = std::cmp::max(min_height, new_min_height);
+            }
+        }
+
+        (min_height, min_time)
+    }
+
+    /// Evaluate whether the sequence locks are satisfied
+    pub fn evaluate_sequence_locks(
+        block: &CircuitBlockHeader,
+        block_height: i32,
+        lock_pair: (i32, i64),
+    ) -> bool {
+        // Get current block time
+        let block_time = get_median_time_past(block);
+
+        // Check if the lock requirements exceed current height/time
+        if lock_pair.0 >= block_height || lock_pair.1 >= block_time {
+            return false;
+        }
+
+        true
+    }
+
+    /// Check sequence locks
+    pub fn sequence_locks(
+        &self,
+        flags: u32,
+        prev_heights: &mut Vec<i32>,
+        block: &CircuitBlockHeader,
+        block_height: i32,
+    ) -> bool {
+        let lock_pair = self.calculate_sequence_locks(flags, prev_heights, block);
+        Self::evaluate_sequence_locks(block, block_height, lock_pair)
+    }
+}
+
+// Helper functions for timelock operations
+
+/// Get median time past for a block at the given height
+/// This is a placeholder and would need to be implemented based on your blockchain access
+fn get_median_time_past_for_height(header: &CircuitBlockHeader, height: i32) -> i64 {
+    // In a real implementation, this would look up the block at the given height
+    // and return its median time past (the median of the last 11 blocks' timestamps)
+    // For now, we'll just return the block's timestamp
+    header.time as i64
+}
+
+/// Get median time past for a block
+fn get_median_time_past(header: &CircuitBlockHeader) -> i64 {
+    // In a real implementation, this would return the median time past of the block
+    // which is the median of the last 11 blocks' timestamps
+    // For now, we'll just return the block's timestamp
+    header.time as i64
 }
 
 impl BorshSerialize for CircuitTransaction {

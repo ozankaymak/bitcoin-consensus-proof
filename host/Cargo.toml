@@ -22,11 +22,13 @@ num-traits.workspace = true
 serde.workspace = true
 tempfile.workspace = true
 jmt = { version = "0.11.0", features = ["sha2"] }
-anyhow = "1.0.96"
+anyhow = "1.0"
 hashbrown = "0.15.2"
 parking_lot = "0.12.3"
 rocksdb = "0.23.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
-bitcoin = "0.32.5"
+bitcoin = { version = "0.32.5", features = ["rand"] }

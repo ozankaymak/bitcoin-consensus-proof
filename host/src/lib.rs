@@ -3,7 +3,7 @@ use std::{fs::File, io::Read, path::Path};
 use anyhow::Result;
 use bitcoin::Block;
 use bitcoin_consensus_core::{
-    utxo_set::{KeyOutPoint, UTXOInclusioWithDeletionProof, UTXO},
+    utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXO},
     TransactionUTXOProofs, TransactionUpdateProof, UTXOInsertionProof,
 };
 use jmt::{
@@ -58,10 +58,8 @@ pub fn generate_utxo_inclusion_proof(
     info!("    Latest version: {}", latest_version);
     info!("    Root hash bytes: {:?}", latest_root.0);
 
-    // Generate key hash from UTXO key
-    let key_hash = KeyHash::with::<sha2::Sha256>(
-        &[&utxo_key.txid[..], &utxo_key.vout.to_be_bytes()[..]].concat(),
-    );
+    // Generate key hash from UTXO key using OutPointBytes
+    let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*utxo_key).as_ref());
     info!("  Key details:");
     info!("    Transaction ID: {:?}", utxo_key.txid);
     info!("    Output index: {}", utxo_key.vout);
@@ -71,7 +69,7 @@ pub fn generate_utxo_inclusion_proof(
     // Get the UTXO value
     info!("  Fetching UTXO from JMT...");
     let utxo_bytes = jmt.get(key_hash, latest_version)?.expect("UTXO not found");
-    let utxo = UTXO::from_bytes(&utxo_bytes);
+    let utxo: UTXO = UTXOBytes(utxo_bytes).into();
     info!("  UTXO details:");
     info!("    Value: {} sats", utxo.value);
     info!("    Block height: {}", utxo.block_height);
@@ -81,7 +79,6 @@ pub fn generate_utxo_inclusion_proof(
         "    Script pubkey length: {} bytes",
         utxo.script_pubkey.len()
     );
-    info!("    Raw bytes length: {} bytes", utxo_bytes.len());
 
     // Generate inclusion proof
     info!("  Generating inclusion proof...");
@@ -113,15 +110,15 @@ pub fn update_utxo_set(
     info!("    Version: {}", latest_version);
     info!("    Root hash bytes: {:?}", latest_root.0);
 
-    // Convert updates to JMT format
+    // Convert updates to JMT format using helper structs
     info!("  Converting updates to JMT format...");
     let jmt_updates: Vec<(KeyHash, Option<Vec<u8>>)> = updates
         .iter()
         .map(|(key, utxo_opt)| {
-            let key_hash = KeyHash::with::<sha2::Sha256>(
-                &[&key.txid[..], &key.vout.to_be_bytes()[..]].concat(),
-            );
-            let value = utxo_opt.as_ref().map(|utxo| utxo.to_bytes());
+            let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*key).as_ref());
+            let value = utxo_opt
+                .as_ref()
+                .map(|utxo| UTXOBytes::from(utxo.clone()).as_ref().to_vec());
             (key_hash, value)
         })
         .collect();
@@ -147,6 +144,7 @@ pub fn update_utxo_set(
 
     // Store the updates
     info!("  Storing updates in database...");
+    info!("    Batch: {:?}", batch);
     storage.update_with_batch(new_root, batch)?;
     storage.store_latest_version(latest_version + 1)?;
     info!("  Database update completed");

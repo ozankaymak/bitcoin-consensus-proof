@@ -130,29 +130,6 @@ impl AsRef<[u8]> for UTXOBytes {
     }
 }
 
-/// Proof for UTXO set operations, contains everything needed to verify
-/// and apply changes to the UTXO set
-#[derive(Serialize, Deserialize, Clone, Debug, BorshDeserialize, BorshSerialize)]
-pub struct UTXOInclusioWithDeletionProof {
-    // /// Proof for updating the JMT
-    // pub update_proof: jmt::proof::UpdateMerkleProof<Sha256>,
-    /// Proof for checking UTXO existence
-    pub proof: jmt::proof::SparseMerkleProof<Sha256>,
-    // /// Proof for checking range of UTXOs (for double-spend prevention)
-    // pub range_proof: jmt::proof::SparseMerkleRangeProof<Sha256>,
-}
-
-/// Info needed for a JMT update within the zkVM
-#[derive(Debug, BorshDeserialize, BorshSerialize)]
-pub struct TransactionElementsBatchProof {
-    /// The key to update
-    pub key: KeyOutPoint,
-    /// The new UTXO value (None for deletion)
-    pub value: Option<UTXO>,
-    /// Proof for the update
-    pub jmt_proof: UpdateMerkleProof<Sha256>,
-}
-
 impl KeyOutPoint {
     pub fn from_outpoint(outpoint: &OutPoint) -> Self {
         KeyOutPoint {

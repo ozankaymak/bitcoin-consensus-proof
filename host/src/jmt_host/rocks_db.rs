@@ -11,7 +11,8 @@ use jmt::{
 };
 
 use bitcoin_consensus_core::{
-    utxo_set::KeyOutPoint, utxo_set::UTXO, TransactionUTXOProofs, UTXOInsertionProof,
+    utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXO},
+    TransactionUTXOProofs, UTXOInsertionProof,
 };
 
 /// RocksDB storage implementation for the Jellyfish Merkle Tree
@@ -105,8 +106,11 @@ impl RocksDbStorage {
 
     /// Update storage with a tree update batch and set the new root hash
     pub fn update_with_batch(&self, root_hash: RootHash, batch: TreeUpdateBatch) -> Result<()> {
+        println!("[DEBUG] Updating storage with batch");
         self.write_node_batch(&batch.node_batch)?;
+        println!("[DEBUG] Wrote node batch");
         self.store_latest_root(root_hash)?;
+        println!("[DEBUG] Stored latest root");
         Ok(())
     }
 
@@ -141,15 +145,15 @@ impl RocksDbStorage {
         Ok(())
     }
 
-    /// Generates a proof for a given UTXO key
+    /// Generates a proof for a given UTXO key TODO: Change this
     pub fn generate_proof(&self, utxo_key: &KeyOutPoint, version: Version) -> Result<()> {
         println!("[DEBUG] Generating proof for UTXO key: {:?}", utxo_key);
 
         // Get the JMT tree
         let tree = self.get_jmt();
 
-        // Compute the key hash
-        let key_hash = utxo_key.to_key_hash();
+        // Compute the key hash using OutPointBytes
+        let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*utxo_key).as_ref());
 
         // Retrieve the value and proof from the tree
         let (value_opt, proof) = tree.get_with_proof(key_hash, version)?;
@@ -167,40 +171,40 @@ impl RocksDbStorage {
         Ok(())
     }
 
-    /// Generates UTXO inclusion proofs for a list of UTXO keys
-    pub fn generate_utxo_inclusion_proofs(
-        &self,
-        utxo_keys: &[KeyOutPoint],
-        version: Version,
-    ) -> Result<Vec<TransactionUTXOProofs>> {
-        println!("[DEBUG] Generating UTXO inclusion proofs");
-        let mut proofs = Vec::new();
+    // /// Generates UTXO inclusion proofs for a list of UTXO keys
+    // pub fn generate_utxo_inclusion_proofs(
+    //     &self,
+    //     utxo_keys: &[KeyOutPoint],
+    //     version: Version,
+    // ) -> Result<Vec<TransactionUTXOProofs>> {
+    //     println!("[DEBUG] Generating UTXO inclusion proofs");
+    //     let mut proofs = Vec::new();
 
-        for utxo_key in utxo_keys {
-            let key_hash = utxo_key.to_key_hash();
-            let (value_opt, proof) = self.get_jmt().get_with_proof(key_hash, version)?;
+    //     for utxo_key in utxo_keys {
+    //         let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*utxo_key).as_ref());
+    //         let (value_opt, proof) = self.get_jmt().get_with_proof(key_hash, version)?;
 
-            if let Some(value) = value_opt {
-                let utxo = UTXO::from_bytes(&value);
-                // Get latest root and unwrap it since we need it
-                let root = match self.get_latest_root()? {
-                    Some(r) => r,
-                    None => return Err(anyhow!("No root hash found")),
-                };
+    //         if let Some(value) = value_opt {
+    //             let utxo: UTXO = UTXOBytes(value).into();
+    //             // Get latest root and unwrap it since we need it
+    //             let root = match self.get_latest_root()? {
+    //                 Some(r) => r,
+    //                 None => return Err(anyhow!("No root hash found")),
+    //             };
 
-                let transaction_proof = TransactionUTXOProofs {
-                    update_proof: vec![Some((proof, utxo, root))].into_iter().collect(),
-                    new_root: root,
-                };
-                proofs.push(transaction_proof);
-            } else {
-                return Err(anyhow!("UTXO not found for key: {:?}", utxo_key));
-            }
-        }
+    //             let transaction_proof = TransactionUTXOProofs {
+    //                 update_proof: vec![Some((proof, utxo, root))].into_iter().collect(),
+    //                 new_root: root,
+    //             };
+    //             proofs.push(transaction_proof);
+    //         } else {
+    //             return Err(anyhow!("UTXO not found for key: {:?}", utxo_key));
+    //         }
+    //     }
 
-        println!("[DEBUG] Generated UTXO inclusion proofs: {:?}", proofs);
-        Ok(proofs)
-    }
+    //     println!("[DEBUG] Generated UTXO inclusion proofs: {:?}", proofs);
+    //     Ok(proofs)
+    // }
 
     /// Generates UTXO insertion proofs for a list of UTXO keys
     pub fn generate_utxo_insertion_proofs(
@@ -212,7 +216,7 @@ impl RocksDbStorage {
         let mut proofs = Vec::new();
 
         for utxo_key in utxo_keys {
-            let key_hash = utxo_key.to_key_hash();
+            let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*utxo_key).as_ref());
             let (value_opt, _) = self.get_jmt().get_with_proof(key_hash, version)?;
 
             if let Some(value) = value_opt {
@@ -379,45 +383,61 @@ impl HasPreimage for RocksDbStorage {
 
 impl TreeWriter for RocksDbStorage {
     fn write_node_batch(&self, node_batch: &NodeBatch) -> Result<()> {
+        println!("[DEBUG] Writing node batch");
         let nodes_cf = self
             .db
             .cf_handle(NODES_CF)
             .ok_or_else(|| anyhow!("Column family '{}' not found", NODES_CF))?;
+        println!("[DEBUG] Got nodes column family");
 
         let values_cf = self
             .db
             .cf_handle(VALUES_CF)
             .ok_or_else(|| anyhow!("Column family '{}' not found", VALUES_CF))?;
+        println!("[DEBUG] Got values column family");
 
         let metadata_cf = self
             .db
             .cf_handle(METADATA_CF)
             .ok_or_else(|| anyhow!("Column family '{}' not found", METADATA_CF))?;
+        println!("[DEBUG] Got metadata column family");
 
         let mut batch = WriteBatch::default();
+        println!("[DEBUG] Created write batch");
         let mut rightmost_leaf: Option<(NodeKey, LeafNode)> = None;
+        println!("[DEBUG] Created rightmost leaf");
 
         // Write nodes
         for (key, node) in node_batch.nodes() {
+            println!("[DEBUG] Writing node: {:?}", key);
             let key_bytes = borsh::to_vec(key)?;
+            println!("[DEBUG] Serialized key");
             let node_bytes = borsh::to_vec(node)?;
+            println!("[DEBUG] Serialized node");
             batch.put_cf(nodes_cf, key_bytes, node_bytes);
+            println!("[DEBUG] Put node in batch");
 
             // Track potential rightmost leaf
             if let Node::Leaf(leaf_node) = node {
+                println!("[DEBUG] Found leaf node");
                 if rightmost_leaf.is_none()
                     || leaf_node.key_hash() > rightmost_leaf.as_ref().unwrap().1.key_hash()
                 {
+                    println!("[DEBUG] Updating rightmost leaf");
                     rightmost_leaf = Some((key.clone(), leaf_node.clone()));
                 }
             }
         }
+        println!("Wrote nodes");
 
         // Write values - using key_hash-first format for efficient lookups
         for ((version, key_hash), value_opt) in node_batch.values() {
+            println!("Writing value: {:?}", key_hash);
             // Create composite key: key_hash (32 bytes) + version (8 bytes)
             let mut key = key_hash.0.to_vec();
+            println!("Created key");
             key.extend_from_slice(&version.to_be_bytes());
+            println!("Extended key");
 
             if let Some(value) = value_opt {
                 batch.put_cf(values_cf, key, value);
@@ -426,21 +446,31 @@ impl TreeWriter for RocksDbStorage {
             }
         }
 
+        println!("AAAAAAAAAAAAAAAA");
+
         // Update rightmost leaf if we found one
         if let Some((ref node_key, ref leaf_node)) = rightmost_leaf {
+            println!("Updating rightmost leaf");
             // Get the existing rightmost leaf
             if let Some(existing_bytes) = self.db.get_cf(metadata_cf, RIGHTMOST_LEAF_KEY)? {
-                let mid = existing_bytes.len() / 2;
+                println!("Got existing rightmost leaf");
+                println!("Existing bytes: {:?}", existing_bytes);
+                // let mid = existing_bytes.len() / 2;
+                let mid = 20; // TODO: Figure out why this happens
+                println!("Mid: {:?}", mid);
                 let leaf_node_bytes = &existing_bytes[mid..];
+                println!("Leaf node bytes: {:?}", leaf_node_bytes);
                 let existing_leaf = LeafNode::try_from_slice(leaf_node_bytes)?;
-
+                println!("Existing leaf: {:?}", existing_leaf);
                 // Only update if our new leaf is further right
                 if leaf_node.key_hash() > existing_leaf.key_hash() {
+                    println!("New leaf is further right");
                     let mut combined = borsh::to_vec(node_key)?;
                     combined.extend(borsh::to_vec(leaf_node)?);
                     batch.put_cf(metadata_cf, RIGHTMOST_LEAF_KEY, combined);
                 }
             } else {
+                println!("No existing rightmost leaf");
                 // No existing rightmost leaf, so store this one
                 let mut combined = borsh::to_vec(node_key)?;
                 combined.extend(borsh::to_vec(leaf_node)?);
@@ -448,8 +478,10 @@ impl TreeWriter for RocksDbStorage {
             }
         }
 
+        println!("Wrote rightmost leaf");
         // Commit all changes atomically
         self.db.write(batch)?;
+        println!("Wrote batch");
 
         Ok(())
     }
@@ -458,6 +490,7 @@ impl TreeWriter for RocksDbStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jmt::proof::UpdateMerkleProof;
     use tempfile::tempdir;
 
     #[test]
@@ -550,6 +583,178 @@ mod tests {
         assert_eq!(stored_root, Some(root_after_delete));
 
         println!("Root verified");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_transaction_utxo_insertion_and_deletion() -> Result<()> {
+        // Create a temporary directory for the test database
+        let temp_dir = tempdir()?;
+        let db_path = temp_dir.path();
+        println!("Using temporary database at {:?}", db_path);
+
+        // Initialize RocksDB storage
+        let storage = RocksDbStorage::new(db_path)?;
+        let tree = storage.get_jmt();
+
+        println!("HOST SIDE: Storage initialized");
+
+        // Create utxo_spent, transaction, and utxo_created
+        let utxo_spent_key: KeyOutPoint = KeyOutPoint {
+            txid: [1u8; 32],
+            vout: 1,
+        };
+
+        let utxo_spent_key_bytes = OutPointBytes::from(utxo_spent_key);
+
+        let utxo_spent = UTXO {
+            value: 100_000_000,
+            block_height: 500_000,
+            block_time: 1_500_000_000,
+            is_coinbase: false,
+            script_pubkey: vec![0u8; 34],
+        };
+
+        let utxo_spent_bytes = UTXOBytes::from(utxo_spent);
+
+        let utxo_created_key: KeyOutPoint = KeyOutPoint {
+            txid: [2u8; 32],
+            vout: 2,
+        };
+
+        let utxo_created_key_bytes = OutPointBytes::from(utxo_created_key);
+
+        let utxo_created = UTXO {
+            value: 50_000_000,
+            block_height: 500_001,
+            block_time: 1_500_000_600,
+            is_coinbase: false,
+            script_pubkey: vec![1u8; 34],
+        };
+
+        let utxo_created_bytes = UTXOBytes::from(utxo_created);
+
+        let zero_root = storage.get_latest_root()?;
+        println!("HOST SIDE: Zero root: {:?}", zero_root);
+
+        let utxo_spent_key_hash = KeyHash::with::<sha2::Sha256>(&utxo_spent_key_bytes);
+        storage.store_key_preimage(utxo_spent_key_hash, utxo_spent_bytes.as_ref())?;
+
+        // Insert the UTXO
+        let (root_after_insert, batch) = tree.put_value_set(
+            [(utxo_spent_key_hash, Some(utxo_spent_bytes.0.clone()))],
+            0, // version
+        )?;
+
+        println!("HOST SIDE: UTXO inserted");
+
+        storage.update_with_batch(root_after_insert, batch)?;
+
+        println!("HOST SIDE: Storage updated");
+        println!("HOST SIDE: Root hash: {:?}", root_after_insert);
+        println!("HOST SIDE: Key hash: {:?}", utxo_spent_key_hash);
+        println!("HOST SIDE: UTXO data: {:?}", utxo_spent_bytes.0.clone());
+        println!("HOST SIDE: UTXO key: {:?}", utxo_spent_key);
+
+        // Now process the transaction on the host side
+
+        // Verify KeyOutPoint exists with UTXO in the tree, and generate proof
+        let (value_opt, proof) = tree.get_with_proof(utxo_spent_key_hash, 0)?;
+        assert_eq!(value_opt, Some(utxo_spent_bytes.0.clone()));
+
+        println!("HOST SIDE: KeyOutPoint-UTXO taken from the tree with proof");
+
+        // Verify proof is valid (Also will be done on the guest side)
+        assert!(proof
+            .verify_existence(root_after_insert, utxo_spent_key_hash, &utxo_spent_bytes.0)
+            .is_ok());
+
+        println!("HOST SIDE: Inclusion Proof verified");
+
+        // Spend the UTXO (delete it)
+        let (root_after_delete, deletion_proof, batch) = tree.put_value_set_with_proof(
+            [(utxo_spent_key_hash, None)],
+            1, // next version
+        )?;
+
+        println!("HOST SIDE: UTXO deleted");
+        println!("HOST SIDE: Root hash after delete: {:?}", root_after_delete);
+        println!("HOST SIDE: Deletion proof: {:?}", deletion_proof);
+        println!("HOST SIDE: Batch: {:?}", batch);
+
+        storage.update_with_batch(root_after_delete, batch)?;
+
+        println!("HOST SIDE: Storage updated after delete");
+
+        // Verify UTXO is gone
+        let value_after_delete = tree.get(utxo_spent_key_hash, 1)?;
+        assert_eq!(value_after_delete, None);
+
+        println!("HOST SIDE: UTXO verified after delete");
+
+        // Verify deletion proof is valid
+        let updates: [(KeyHash, Option<Vec<u8>>); 1] = [(utxo_spent_key_hash, None)];
+
+        println!("HOST SIDE: Updates: {:?}", updates);
+
+        assert!(deletion_proof
+            .verify_update(root_after_insert, root_after_delete, &updates)
+            .is_ok());
+
+        println!("HOST SIDE: Deletion proof verified");
+
+        // Check that we can retrieve the latest root
+        let stored_root_after_delete = storage.get_latest_root()?;
+
+        println!(
+            "HOST SIDE: Stored root after spent UTXO deletion: {:?}",
+            stored_root_after_delete
+        );
+
+        assert_eq!(stored_root_after_delete, Some(root_after_delete));
+
+        println!("HOST SIDE: Root verified after spent UTXO deletion");
+
+        // Now, insert the new UTXO
+        let utxo_created_key_hash = KeyHash::with::<sha2::Sha256>(&utxo_created_key_bytes);
+        storage.store_key_preimage(utxo_created_key_hash, utxo_created_key_bytes.as_ref())?;
+
+        // Insert the UTXO
+        let (root_after_insert, update_proof, batch) = tree.put_value_set_with_proof(
+            [(utxo_created_key_hash, Some(utxo_created_bytes.0.clone()))],
+            2, // version
+        )?;
+
+        println!("HOST SIDE: UTXO inserted");
+        println!("HOST SIDE: Root hash after insert: {:?}", root_after_insert);
+        println!("HOST SIDE: Key hash: {:?}", utxo_created_key_hash);
+        println!("HOST SIDE: UTXO data: {:?}", utxo_created_bytes.0.clone());
+        println!("HOST SIDE: UTXO key: {:?}", utxo_created_key);
+        println!("HOST SIDE: Batch: {:?}", batch);
+        storage.update_with_batch(root_after_insert, batch)?;
+
+        // Now verify the update proof for the new UTXO
+        // let (value_opt, inclusion_proof) = tree.get_with_proof(utxo_created_key_hash, 2)?;
+        println!("HOST SIDE: KeyOutPoint-UTXO taken from the tree with proof");
+        println!("HOST SIDE: Value: {:?}", value_opt);
+        // println!("HOST SIDE: Proof: {:?}", inclusion_proof);
+        assert_eq!(value_opt, Some(utxo_created_bytes.0.clone()));
+        // let update_proof = UpdateMerkleProof::new(vec![inclusion_proof]);
+        // println!("HOST SIDE: update_proof: {:?}", update_proof);
+
+        let latest_root = storage.get_latest_root()?;
+        println!("HOST SIDE: Latest root: {:?}", latest_root);
+        assert_eq!(latest_root, Some(root_after_insert));
+
+        // println!("update batch: {:?}", batch);
+
+        let updates = [(utxo_created_key_hash, Some(utxo_created_bytes.0.clone()))];
+
+        println!("HOST SIDE: KeyOutPoint-UTXO taken from the tree with proof");
+        assert!(update_proof
+            .verify_update(root_after_delete, root_after_insert, updates)
+            .is_ok());
 
         Ok(())
     }

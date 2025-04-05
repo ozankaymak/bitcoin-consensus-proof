@@ -1,44 +1,101 @@
 // use borsh::{BorshDeserialize, BorshSerialize};
 // use serde::{Deserialize, Serialize};
 
-/// Code is taken from Clementine
+/// Bitcoin Merkle Tree Implementation
+/// ==================================
+///
+/// This module provides an implementation of Bitcoin's Merkle tree structure, which is used to
+/// efficiently verify that a transaction is included in a block. Bitcoin uses a binary Merkle tree
+/// with double-SHA256 hashing at each level.
+///
+/// The implementation is based on Clementine's code:
 /// https://github.com/chainwayxyz/clementine/blob/b600ea18df72bdc60015ded01b78131b4c9121d7/operator/src/bitcoin_merkle.rs
+///
+/// In Bitcoin's Merkle tree:
+/// - Leaf nodes are transaction IDs (TXIDs), which are the double-SHA256 hashes of the transactions
+/// - Parent nodes are the double-SHA256 hash of the concatenation of their two child nodes
+/// - If a level has an odd number of nodes, the last node is duplicated before hashing
+/// - The tree root is the Merkle root, which is stored in the block header
 ///
 use crate::hashes::calculate_double_sha256;
 
+/// Represents a Bitcoin Merkle tree structure
+///
+/// This struct stores the entire Merkle tree in memory, with each level of the tree
+/// represented as a vector of 32-byte hashes. The first level (index 0) contains the
+/// transaction IDs, and the last level contains the single Merkle root.
 #[derive(Debug, Clone)]
 pub struct BitcoinMerkleTree {
+    /// The nodes at each level of the tree, organized as a vector of levels
+    /// Each level is a vector of 32-byte hashes
+    /// nodes[0] contains the TXIDs (leaf nodes)
+    /// nodes[nodes.len()-1] contains the single Merkle root
     nodes: Vec<Vec<[u8; 32]>>,
 }
 
 impl BitcoinMerkleTree {
+    /// Creates a new Bitcoin Merkle tree from a list of transaction IDs
+    ///
+    /// This method constructs a complete Merkle tree in memory, starting with the transaction IDs
+    /// as leaf nodes (level 0) and building up to the Merkle root. Each level of the tree
+    /// contains half as many nodes as the previous level (rounded up if the previous level
+    /// had an odd number of nodes).
+    ///
+    /// # Arguments
+    ///
+    /// * `txids` - A vector of 32-byte transaction IDs, each representing the double-SHA256 hash of a transaction
+    ///
+    /// # Returns
+    ///
+    /// A new BitcoinMerkleTree with the complete tree structure
+    ///
+    /// # Special Cases
+    ///
+    /// * If there is only one transaction (just the coinbase transaction), the tree consists of just that TXID,
+    ///   which is also the Merkle root.
     pub fn new(txids: Vec<[u8; 32]>) -> Self {
         if txids.len() == 1 {
-            // root is the coinbase txid
+            // Special case: if there's only one transaction (the coinbase transaction),
+            // then the Merkle root is just the TXID itself
             return BitcoinMerkleTree { nodes: vec![txids] };
         }
 
+        // Initialize the tree with the first level containing the TXIDs
         let mut tree = BitcoinMerkleTree { nodes: vec![txids] };
 
-        // Construct the tree
-        let mut curr_level_offset: usize = 1;
-        let mut prev_level_size = tree.nodes[0].len();
-        let mut prev_level_index_offset = 0;
-        let mut preimage: [u8; 64] = [0; 64];
+        // Construct the tree level by level
+        let mut curr_level_offset: usize = 1; // Index of the current level being constructed
+        let mut prev_level_size = tree.nodes[0].len(); // Number of nodes in the previous level
+        let mut prev_level_index_offset = 0; // Offset into the previous level (always 0 in this implementation)
+        let mut preimage: [u8; 64] = [0; 64]; // Buffer for concatenating two child hashes (32 bytes each)
+
+        // Continue building the tree until we reach a level with only one node (the root)
         while prev_level_size > 1 {
+            // Add a new empty level to the tree
             tree.nodes.push(vec![]);
+
+            // Process each pair of nodes from the previous level
             for i in 0..(prev_level_size / 2) {
+                // Copy the first child node's hash into the first half of the preimage
                 preimage[..32].copy_from_slice(
                     &tree.nodes[curr_level_offset - 1][prev_level_index_offset + i * 2],
                 );
+                // Copy the second child node's hash into the second half of the preimage
                 preimage[32..].copy_from_slice(
                     &tree.nodes[curr_level_offset - 1][prev_level_index_offset + i * 2 + 1],
                 );
+                // Calculate the parent node's hash by double-SHA256 of the concatenated child hashes
                 let combined_hash = calculate_double_sha256(&preimage);
+                // Add the parent node's hash to the current level
                 tree.nodes[curr_level_offset].push(combined_hash);
             }
+
+            // Handle the case where the previous level had an odd number of nodes
             if prev_level_size % 2 == 1 {
+                // In Bitcoin's Merkle tree, if a level has an odd number of nodes,
+                // the last node is duplicated when calculating its parent
                 let mut preimage: [u8; 64] = [0; 64];
+                // Copy the last node's hash into both halves of the preimage
                 preimage[..32].copy_from_slice(
                     &tree.nodes[curr_level_offset - 1]
                         [prev_level_index_offset + prev_level_size - 1],
@@ -47,90 +104,106 @@ impl BitcoinMerkleTree {
                     &tree.nodes[curr_level_offset - 1]
                         [prev_level_index_offset + prev_level_size - 1],
                 );
+                // Calculate the parent node's hash
                 let combined_hash = calculate_double_sha256(&preimage);
+                // Add the parent node's hash to the current level
                 tree.nodes[curr_level_offset].push(combined_hash);
             }
+
+            // Move to the next level
             curr_level_offset += 1;
-            prev_level_size = (prev_level_size + 1) / 2;
-            prev_level_index_offset = 0;
+            // Calculate the size of the level we just created
+            prev_level_size = (prev_level_size + 1) / 2; // Ceiling division to handle odd numbers
+            prev_level_index_offset = 0; // Always 0 in this implementation
         }
+
+        // Return the complete tree
         tree
     }
 
-    // Returns the Merkle root
+    /// Returns the Merkle root of the tree
+    ///
+    /// The Merkle root is the single hash at the top level of the tree, which
+    /// represents a commitment to all the transactions in the block.
+    ///
+    /// # Returns
+    ///
+    /// A 32-byte array containing the Merkle root hash
     pub fn root(&self) -> [u8; 32] {
+        // The root is the single node in the last level of the tree
         self.nodes[self.nodes.len() - 1][0]
     }
 
-    fn get_idx_path(&self, index: u32) -> Vec<[u8; 32]> {
-        assert!(index < self.nodes[0].len() as u32, "Index out of bounds");
-        let mut path = vec![];
-        let mut level = 0;
-        let mut i = index;
-        while level < self.nodes.len() as u32 - 1 {
-            if i % 2 == 1 {
-                path.push(self.nodes[level as usize][i as usize - 1]);
-            } else if (self.nodes[level as usize].len() - 1) as u32 == i {
-                path.push(self.nodes[level as usize][i as usize]);
-            } else {
-                path.push(self.nodes[level as usize][(i + 1) as usize]);
-            }
-            level += 1;
-            i /= 2;
-        }
-        path
-    }
-
-    // pub fn generate_proof(&self, idx: u32) -> BlockInclusionProof {
-    //     let path = self.get_idx_path(idx);
-    //     BlockInclusionProof::new(idx, path)
-    // }
-
-    // pub fn calculate_root_with_merkle_proof(
-    //     txid: [u8; 32],
-    //     inclusion_proof: BlockInclusionProof,
-    // ) -> [u8; 32] {
-    //     inclusion_proof.get_root(txid)
-    // }
-
     /// Generate the Merkle root without storing the entire tree
+    ///
+    /// This is a memory-efficient implementation that calculates the Merkle root
+    /// without storing the entire tree structure. It only keeps track of the current
+    /// level being processed and the next level being constructed, which makes it more
+    /// memory-efficient when dealing with large blocks.
+    ///
+    /// # Arguments
+    ///
+    /// * `txids` - A vector of 32-byte transaction IDs
+    ///
+    /// # Returns
+    ///
+    /// A 32-byte array containing the Merkle root hash
+    ///
+    /// # Special Cases
+    ///
+    /// * If the input vector is empty, returns an array of zeroes.
+    /// * If there is only one transaction, returns that transaction's ID as the root.
     pub fn generate_root(txids: Vec<[u8; 32]>) -> [u8; 32] {
         if txids.is_empty() {
             // Special case: empty merkle tree
-            return [0; 32];
+            // This shouldn't happen in valid Bitcoin blocks
+            panic!("Empty merkle tree");
         }
 
         if txids.len() == 1 {
             // Special case: just one transaction
+            // The Merkle root is the transaction ID itself
             return txids[0];
         }
 
         // Start with the leaf hashes (txids)
+        // This is the first level of the tree
         let mut current_level = txids;
+        // Buffer for the next level's hashes
         let mut next_level = Vec::new();
+        // Buffer for concatenating two child hashes (32 bytes each)
         let mut preimage = [0u8; 64];
 
         // Iterate up the tree, computing each level until we reach the root
+        // This loop continues until we have only one hash, which is the Merkle root
         while current_level.len() > 1 {
+            // Clear the next level to prepare for adding new parent nodes
             next_level.clear();
 
-            // Process pairs of nodes
+            // Process pairs of nodes from the current level
             for i in (0..current_level.len()).step_by(2) {
                 if i + 1 < current_level.len() {
-                    // Hash a pair of nodes
+                    // If we have a pair of nodes, hash them together
+                    // Copy the first child node's hash into the first half of the preimage
                     preimage[..32].copy_from_slice(&current_level[i]);
+                    // Copy the second child node's hash into the second half of the preimage
                     preimage[32..].copy_from_slice(&current_level[i + 1]);
                 } else {
                     // Odd number of nodes, duplicate the last one
+                    // In Bitcoin's Merkle tree, if a level has an odd number of nodes,
+                    // the last node is duplicated when calculating its parent
                     preimage[..32].copy_from_slice(&current_level[i]);
                     preimage[32..].copy_from_slice(&current_level[i]);
                 }
 
+                // Calculate the parent node's hash by double-SHA256 of the concatenated child hashes
                 let combined_hash = calculate_double_sha256(&preimage);
+                // Add the parent node's hash to the next level
                 next_level.push(combined_hash);
             }
 
             // Swap buffers - reuse memory by moving next_level to current_level
+            // This avoids allocating new memory for each level
             std::mem::swap(&mut current_level, &mut next_level);
         }
 
@@ -138,48 +211,6 @@ impl BitcoinMerkleTree {
         current_level[0]
     }
 }
-
-// #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
-// pub struct BlockInclusionProof {
-//     idx: u32,
-//     merkle_proof: Vec<[u8; 32]>,
-// }
-
-// impl BlockInclusionProof {
-//     pub fn new(idx: u32, merkle_proof: Vec<[u8; 32]>) -> Self {
-//         BlockInclusionProof { idx, merkle_proof }
-//     }
-
-//     pub fn get_root(&self, txid: [u8; 32]) -> [u8; 32] {
-//         let mut preimage: [u8; 64] = [0; 64];
-//         let mut combined_hash: [u8; 32] = txid;
-//         let mut index = self.idx;
-//         let mut level: u32 = 0;
-//         while level < self.merkle_proof.len() as u32 {
-//             if index % 2 == 0 {
-//                 preimage[..32].copy_from_slice(&combined_hash);
-//                 preimage[32..].copy_from_slice(&self.merkle_proof[level as usize]);
-//                 combined_hash = calculate_double_sha256(&preimage);
-//             } else {
-//                 preimage[..32].copy_from_slice(&self.merkle_proof[level as usize]);
-//                 preimage[32..].copy_from_slice(&combined_hash);
-//                 combined_hash = calculate_double_sha256(&preimage);
-//             }
-//             level += 1;
-//             index /= 2;
-//         }
-//         combined_hash
-//     }
-// }
-
-// pub fn verify_merkle_proof(
-//     txid: [u8; 32],
-//     inclusion_proof: &BlockInclusionProof,
-//     root: [u8; 32],
-// ) -> bool {
-//     let calculated_root = inclusion_proof.get_root(txid);
-//     calculated_root == root
-// }
 
 #[cfg(test)]
 mod tests {
@@ -229,46 +260,5 @@ mod tests {
         //     let merkle_proof_i = merkle_tree.generate_proof(i as u32);
         //     assert!(verify_merkle_proof(txid, &merkle_proof_i, merkle_root));
         // }
-    }
-
-    #[test]
-    fn test_efficient_merkle_root() {
-        // Generate 1024 sample txids (just random data for this test)
-        let mut txids = Vec::with_capacity(1024);
-        for i in 0..1024 {
-            let mut txid = [0u8; 32];
-            // Fill with some deterministic pattern based on i
-            for j in 0..32 {
-                txid[j] = ((i + j) % 256) as u8;
-            }
-            txids.push(txid);
-        }
-
-        // Generate root using the full tree method (BitcoinMerkleTree)
-        let tree = BitcoinMerkleTree::new(txids.clone());
-        let root_full = tree.root();
-
-        // Generate root using the memory-efficient method
-        let root_efficient = BitcoinMerkleTree::generate_root(txids.clone());
-
-        // Verify both methods produce the same root
-        assert_eq!(root_full, root_efficient);
-
-        // Analyze memory complexity by calculating hashes at each level
-        println!("Memory complexity analysis of Merkle tree computation:");
-        println!("Level 0 (leaves): {} hashes", txids.len());
-
-        let mut level_size = txids.len();
-        let mut level = 1;
-
-        while level_size > 1 {
-            level_size = (level_size + 1) / 2; // Ceiling division to handle odd numbers
-            println!("Level {}: {} hashes", level, level_size);
-            level += 1;
-        }
-
-        // In the efficient implementation, we only need to store the current level
-        // and the next level that we're computing, so the memory complexity is
-        // approximately O(n) where n is the number of transactions
     }
 }

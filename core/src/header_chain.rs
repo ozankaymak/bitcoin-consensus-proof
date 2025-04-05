@@ -1,9 +1,42 @@
 // Implementation of this module is inspired by the Bitcoin Core source code and from here:
 // https://github.com/ZeroSync/header_chain/tree/master/program/src/block_header.
 
-/// This module contains the implementation of the header chain circuit, which is basically
-/// the Bitcoin header chain verification logic.
-/// WARNING: This implementation is not a word-to-word translation of the Bitcoin Core source code.
+/// # Bitcoin Header Chain Verification
+///
+/// This module implements Bitcoin's header chain verification for zero-knowledge circuits.
+/// It provides the core functionality for validating Bitcoin block headers, difficulty
+/// adjustments, and maintaining the chain state in a circuit-compatible manner.
+///
+/// ## Key Features
+///
+/// - Block header validation and hash verification
+/// - Difficulty target adjustment calculations (every 2016 blocks)
+/// - Chain state tracking with accumulated proof-of-work
+/// - Median time-past calculation for timestamp validation
+/// - Network-specific validation rules (mainnet, testnet, signet, regtest)
+///
+/// ## Architecture
+///
+/// The implementation follows a stateful validation model where each block builds upon
+/// the state of the previous blocks. The central component is the `HeaderChainState` struct
+/// which maintains the current state of the chain including:
+///
+/// - Current height
+/// - Total accumulated proof-of-work
+/// - Current difficulty target
+/// - Recent block timestamps (for median time calculations)
+///
+/// ## Consensus Rules
+///
+/// The implementation enforces the following Bitcoin consensus rules:
+///
+/// - Block hash must meet the required difficulty target
+/// - Block timestamps must be greater than the median of the previous 11 blocks
+/// - Difficulty adjustments occur every 2016 blocks based on actual time taken
+/// - Special testnet and regtest mode behaviors are supported
+///
+/// WARNING: This implementation is not a word-to-word translation of the Bitcoin Core source code
+/// but provides equivalent validation suitable for zero-knowledge circuit compatibility.
 use bitcoin::{
     block::{Header, Version},
     hashes::Hash,
@@ -16,14 +49,42 @@ use sha2::{Digest, Sha256};
 
 use crate::params::{IS_REGTEST, IS_TESTNET4, MINIMUM_WORK_TESTNET4, NETWORK_PARAMS};
 
-/// An epoch should be two weeks (represented as number of seconds)
-/// seconds/minute * minutes/hour * hours/day * 14 days
+/// Expected time between difficulty adjustments (2 weeks in seconds)
+///
+/// In Bitcoin, difficulty adjustments occur every 2016 blocks, and the network
+/// targets a 10-minute average block time. This value represents the expected
+/// time for mining 2016 blocks: 60 seconds * 60 minutes * 24 hours * 14 days = 1,209,600 seconds.
+///
+/// This constant is used when calculating new difficulty targets to ensure the
+/// network maintains approximately 10-minute block intervals over time.
 const EXPECTED_EPOCH_TIMESPAN: u32 = 60 * 60 * 24 * 14;
 
-/// Number of blocks per epoch
+/// Number of blocks in a difficulty adjustment period (epoch)
+///
+/// Bitcoin adjusts mining difficulty every 2016 blocks to maintain an average 10-minute
+/// block interval. This value was chosen to make adjustments occur approximately every
+/// two weeks (2016 blocks * 10 minutes = 2 weeks).
+///
+/// The difficulty adjustment algorithm compares the actual time taken to mine 2016 blocks
+/// with the expected time (EXPECTED_EPOCH_TIMESPAN) and adjusts the target accordingly.
 const BLOCKS_PER_EPOCH: u32 = 2016;
 
-/// Bitcoin block header.
+/// Circuit-compatible Bitcoin block header
+///
+/// This structure represents a Bitcoin block header in a format suitable for
+/// processing in zero-knowledge circuits. It contains all the essential fields
+/// from a standard Bitcoin block header:
+///
+/// - `version`: Block version indicating the set of block validation rules to follow
+/// - `prev_block_hash`: Reference to the previous block (32-byte hash)
+/// - `merkle_root`: The Merkle root of all transactions in the block (32-byte hash)
+/// - `time`: Block timestamp in Unix time (seconds since Jan 1, 1970)
+/// - `bits`: Compact representation of the current difficulty target
+/// - `nonce`: Value that miners modify to find a valid block hash
+///
+/// The header format is the fundamental building block of Bitcoin's blockchain structure,
+/// enabling lightweight verification of the chain's integrity through its hash-based
+/// proof-of-work system.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct CircuitBlockHeader {
     pub version: i32,
@@ -35,17 +96,37 @@ pub struct CircuitBlockHeader {
 }
 
 impl CircuitBlockHeader {
+    /// Computes the block hash according to Bitcoin's consensus rules
+    ///
+    /// The block hash is calculated by applying double SHA-256 (SHA-256 applied twice)
+    /// to the serialized block header. This is a critical operation in Bitcoin as it:
+    ///
+    /// 1. Creates the hash that uniquely identifies each block
+    /// 2. Forms the basis for Bitcoin's proof-of-work consensus mechanism
+    /// 3. Establishes the chain linkage through the prev_block_hash field
+    ///
+    /// The serialization order follows Bitcoin's protocol specifications:
+    /// version + prev_block_hash + merkle_root + time + bits + nonce
+    ///
+    /// All integer fields are serialized in little-endian byte order to match
+    /// Bitcoin's internal representation.
+    ///
+    /// # Returns
+    ///
+    /// A 32-byte array containing the block hash
     pub fn compute_block_hash(&self) -> [u8; 32] {
         println!("[DEBUG] Computing block hash");
+        // First SHA-256 round - hash all header fields in order
         let mut hasher = Sha256::new();
-        hasher.update(self.version.to_le_bytes());
-        hasher.update(self.prev_block_hash);
-        hasher.update(self.merkle_root);
-        hasher.update(self.time.to_le_bytes());
-        hasher.update(self.bits.to_le_bytes());
-        hasher.update(self.nonce.to_le_bytes());
+        hasher.update(self.version.to_le_bytes()); // 4 bytes, little-endian
+        hasher.update(self.prev_block_hash); // 32 bytes
+        hasher.update(self.merkle_root); // 32 bytes
+        hasher.update(self.time.to_le_bytes()); // 4 bytes, little-endian
+        hasher.update(self.bits.to_le_bytes()); // 4 bytes, little-endian
+        hasher.update(self.nonce.to_le_bytes()); // 4 bytes, little-endian
         let first_hash_result = hasher.finalize_reset();
 
+        // Second SHA-256 round - hash the result of the first hash
         hasher.update(first_hash_result);
         let result: [u8; 32] = hasher
             .finalize()
@@ -56,6 +137,18 @@ impl CircuitBlockHeader {
     }
 }
 
+/// Converts a bitcoin-rs Header into a CircuitBlockHeader
+///
+/// This implementation allows seamless conversion from the standard Bitcoin header
+/// representation (used in the bitcoin-rs library) to our circuit-compatible header format.
+///
+/// # Arguments
+///
+/// * `header` - A standard Bitcoin block header from the bitcoin-rs library
+///
+/// # Returns
+///
+/// A new CircuitBlockHeader containing the same data
 impl From<Header> for CircuitBlockHeader {
     fn from(header: Header) -> Self {
         CircuitBlockHeader {
@@ -69,6 +162,13 @@ impl From<Header> for CircuitBlockHeader {
     }
 }
 
+/// Converts a CircuitBlockHeader into a bitcoin-rs Header
+///
+/// This implementation allows seamless conversion from our circuit-compatible header format
+/// back to the standard Bitcoin header representation used in the bitcoin-rs library.
+///
+/// This conversion makes it easy to work with both formats and leverage existing Bitcoin
+/// tools and libraries.
 impl Into<Header> for CircuitBlockHeader {
     fn into(self) -> Header {
         Header {
@@ -84,6 +184,22 @@ impl Into<Header> for CircuitBlockHeader {
     }
 }
 
+/// The state of a Bitcoin blockchain's header chain
+///
+/// This structure maintains the essential state needed to validate new blocks and
+/// verify the integrity of the Bitcoin blockchain. It encapsulates the current state
+/// of the chain including:
+///
+/// - `block_height`: The current block height (number of blocks in the chain)
+/// - `total_work`: Total accumulated proof-of-work (sum of work from all blocks)
+/// - `best_block_hash`: Hash of the most recent valid block
+/// - `current_target_bits`: Current difficulty target in compact form
+/// - `epoch_start_time`: Timestamp of the first block in the current epoch
+/// - `prev_11_timestamps`: Last 11 block timestamps (for median time calculation)
+/// - `block_time`: Timestamp of the most recent block
+///
+/// This state information is critical for enforcing Bitcoin's consensus rules,
+/// especially regarding difficulty adjustments and timestamp validation.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct HeaderChainState {
     pub block_height: u32,
@@ -96,10 +212,25 @@ pub struct HeaderChainState {
 }
 
 impl HeaderChainState {
+    /// Creates a new, empty header chain state
+    ///
+    /// This initializes a fresh HeaderChainState with default values:
+    /// - Block height is set to u32::MAX (will be incremented to 0 on first block)
+    /// - Zero total accumulated work
+    /// - Zero best block hash (genesis block predecessor)
+    /// - Network's maximum allowed difficulty target
+    /// - Empty timestamp history
+    ///
+    /// This represents the state before the genesis block and serves as the starting
+    /// point for chain validation.
+    ///
+    /// # Returns
+    ///
+    /// A new HeaderChainState with default values
     pub fn new() -> Self {
         println!("[DEBUG] Creating new HeaderChainState");
         let result = HeaderChainState {
-            block_height: u32::MAX,
+            block_height: u32::MAX, // Will wrap to 0 on first block
             total_work: [0u8; 32],
             best_block_hash: [0u8; 32],
             current_target_bits: NETWORK_PARAMS.max_bits,
@@ -111,31 +242,69 @@ impl HeaderChainState {
         result
     }
 
+    /// Verifies a block header and updates the chain state
+    ///
+    /// This is the core validation function that:
+    /// 1. Validates that the block meets Bitcoin's consensus rules
+    /// 2. Updates the chain state to include the new block
+    ///
+    /// The validation includes:
+    /// - Verifying the block references the current chain tip
+    /// - Checking that the difficulty target is correct
+    /// - Verifying the block hash meets the required difficulty
+    /// - Validating the block timestamp
+    /// - Calculating and updating difficulty adjustments as needed
+    ///
+    /// Special rules are applied for testnet and regtest networks to accommodate
+    /// their different consensus behaviors.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_header` - The new block header to verify and apply
+    ///
+    /// # Panics
+    ///
+    /// - If the block doesn't reference the current chain tip
+    /// - If the block's difficulty bits don't match the expected value
+    /// - If the block hash doesn't meet the required difficulty target
+    /// - If the block timestamp is invalid
     pub fn verify_and_apply_header(&mut self, block_header: &CircuitBlockHeader) {
         println!("[DEBUG] Verifying and applying block header");
+
+        // Determine the current target based on network rules
         let mut current_target_bytes = if IS_REGTEST {
+            // Regtest always uses the maximum difficulty target
             NETWORK_PARAMS.max_target.to_be_bytes()
         } else {
+            // Convert the current target bits to full 256-bit target
             bits_to_target(self.current_target_bits)
         };
+
+        // Load the current accumulated work from the chain state
         let mut current_work: U256 = U256::from_be_bytes(self.total_work);
 
+        // For testnet, special handling of timestamp gaps
         let mut last_block_time = if IS_TESTNET4 {
             if self.block_height == u32::MAX {
+                // Initial state
                 0
             } else {
+                // Use the timestamp of the appropriate previous block
                 self.prev_11_timestamps[self.block_height as usize % 11]
             }
         } else {
             0
         };
 
+        // Increment block height (or set to 0 if this is the first block)
         self.block_height = self.block_height.wrapping_add(1);
         self.block_time = block_header.time;
 
+        // Handle special testnet difficulty rules
         let (target_to_use, expected_bits, work_to_add) = if IS_TESTNET4 {
+            // Testnet allows return to minimum difficulty if no blocks found for 20 minutes
             if block_header.time > last_block_time + 1200 {
-                // If the block is an epoch block, then it still has to have the real target.
+                // Special case: epoch blocks must still use the correct difficulty
                 if self.block_height % BLOCKS_PER_EPOCH == 0 {
                     (
                         current_target_bytes,
@@ -143,6 +312,7 @@ impl HeaderChainState {
                         calculate_work(&current_target_bytes),
                     )
                 } else {
+                    // Minimum difficulty allowed
                     (
                         NETWORK_PARAMS.max_target_bytes,
                         NETWORK_PARAMS.max_bits,
@@ -150,6 +320,7 @@ impl HeaderChainState {
                     )
                 }
             } else {
+                // Normal difficulty
                 (
                     current_target_bytes,
                     self.current_target_bits,
@@ -157,6 +328,7 @@ impl HeaderChainState {
                 )
             }
         } else {
+            // Mainnet and other networks always use normal difficulty
             (
                 current_target_bytes,
                 self.current_target_bits,
@@ -164,35 +336,47 @@ impl HeaderChainState {
             )
         };
 
+        // Calculate the hash of the new block
         let new_block_hash = block_header.compute_block_hash();
 
+        // Verify the block references the current chain tip
         assert_eq!(block_header.prev_block_hash, self.best_block_hash);
 
+        // Verify the block has the correct difficulty bits
         if IS_REGTEST {
+            // Regtest always uses the maximum difficulty
             assert_eq!(block_header.bits, NETWORK_PARAMS.max_bits);
         } else {
+            // Other networks must use the expected difficulty
             assert_eq!(block_header.bits, expected_bits);
         }
 
+        // Verify the block hash is below the target (meets difficulty requirement)
         check_hash_valid(&new_block_hash, &target_to_use);
 
+        // Verify the block timestamp is valid
         if !validate_timestamp(block_header.time, self.prev_11_timestamps) {
             panic!("Timestamp is not valid");
         }
 
+        // Update the chain state with the new block information
         self.best_block_hash = new_block_hash;
         current_work = current_work.wrapping_add(&work_to_add);
 
+        // For non-regtest networks, record the timestamp at epoch boundaries
         if !IS_REGTEST && self.block_height % BLOCKS_PER_EPOCH == 0 {
             self.epoch_start_time = block_header.time;
         }
 
+        // Update the timestamp history buffer
         self.prev_11_timestamps[self.block_height as usize % 11] = block_header.time;
 
+        // Update the last block time for testnet
         if IS_TESTNET4 {
             last_block_time = block_header.time;
         }
 
+        // Calculate difficulty adjustment at the end of each epoch
         if !IS_REGTEST && self.block_height % BLOCKS_PER_EPOCH == BLOCKS_PER_EPOCH - 1 {
             current_target_bytes = calculate_new_difficulty(
                 self.epoch_start_time,
@@ -202,36 +386,86 @@ impl HeaderChainState {
             self.current_target_bits = target_to_bits(&current_target_bytes);
         }
 
+        // Update the total accumulated work
         self.total_work = current_work.to_be_bytes();
         println!("[DEBUG] Updated HeaderChainState: {:?}", self);
     }
 }
 
+/// Calculates the median value from an array of 11 timestamp values
+///
+/// The median timestamp is used in Bitcoin to determine if a new block's
+/// timestamp is valid. By using the median rather than the most recent timestamp,
+/// Bitcoin prevents miners from manipulating the timestamps too dramatically.
+///
+/// # Arguments
+///
+/// * `arr` - An array of 11 timestamp values
+///
+/// # Returns
+///
+/// The median value from the array (middle value after sorting)
 fn median(arr: [u32; 11]) -> u32 {
     println!("[DEBUG] Calculating median of timestamps");
     let mut sorted_arr = arr;
     sorted_arr.sort_unstable();
+    // For 11 elements, the median is the 6th element (index 5)
     let result = sorted_arr[5];
     println!("[DEBUG] Median: {}", result);
     result
 }
 
+/// Validates a block timestamp against previous block timestamps
+///
+/// In Bitcoin, a block's timestamp must be greater than the median of the
+/// previous 11 blocks. This prevents extreme timestamp manipulation and ensures
+/// a reasonable progression of time in the blockchain.
+///
+/// # Arguments
+///
+/// * `block_time` - The timestamp of the block being verified
+/// * `prev_11_timestamps` - Timestamps of the previous 11 blocks
+///
+/// # Returns
+///
+/// `true` if the timestamp is valid, `false` otherwise
 fn validate_timestamp(block_time: u32, prev_11_timestamps: [u32; 11]) -> bool {
     println!("[DEBUG] Validating block timestamp");
     let median_time = median(prev_11_timestamps);
+    // The block timestamp must be strictly greater than the median time
     let result = block_time > median_time;
     println!("[DEBUG] Timestamp Valid: {}", result);
     result
 }
 
+/// Converts the compact "bits" representation to a full 256-bit target
+///
+/// Bitcoin stores difficulty targets in a compact 32-bit format to save space.
+/// This function expands that compact representation to the full 256-bit target
+/// that a block hash must be less than or equal to.
+///
+/// The format of the compact representation is:
+/// - First byte: exponent (number of bytes)
+/// - Next three bytes: mantissa (significant digits)
+///
+/// # Arguments
+///
+/// * `bits` - The compact 32-bit representation of the target
+///
+/// # Returns
+///
+/// A 32-byte array containing the full 256-bit target
 pub fn bits_to_target(bits: u32) -> [u8; 32] {
     println!("[DEBUG] Converting bits to target");
-    let size = (bits >> 24) as usize;
-    let mantissa = bits & 0x00ffffff;
+    let size = (bits >> 24) as usize; // Get the exponent (first byte)
+    let mantissa = bits & 0x00ffffff; // Get the mantissa (last 3 bytes)
 
+    // Convert to target based on the encoding rules
     let target = if size <= 3 {
+        // For small exponents, shift right
         U256::from(mantissa >> (8 * (3 - size)))
     } else {
+        // For normal exponents, shift left
         U256::from(mantissa) << (8 * (size - 3))
     };
     let result = target.to_be_bytes();
@@ -239,88 +473,213 @@ pub fn bits_to_target(bits: u32) -> [u8; 32] {
     result
 }
 
+/// Converts a full 256-bit target to the compact "bits" representation
+///
+/// This is the reverse of the bits_to_target function. It takes a full 256-bit
+/// target and compresses it into the 32-bit compact format used in Bitcoin
+/// block headers.
+///
+/// # Arguments
+///
+/// * `target` - A 32-byte array containing the full 256-bit target
+///
+/// # Returns
+///
+/// The compact 32-bit representation of the target
 fn target_to_bits(target: &[u8; 32]) -> u32 {
     println!("[DEBUG] Converting target to bits");
     let target_u256 = U256::from_be_slice(target);
-    let target_bits = target_u256.bits();
+    let target_bits = target_u256.bits(); // Get the bit length
+
+    // Calculate the size (exponent) based on the number of significant bits
     let size = (263 - target_bits) / 8;
+
+    // Build the compact representation
     let mut compact_target = [0u8; 4];
-    compact_target[0] = 33 - size as u8;
-    compact_target[1] = target[size - 1 as usize];
-    compact_target[2] = target[size + 0 as usize];
-    compact_target[3] = target[size + 1 as usize];
+    compact_target[0] = 33 - size as u8; // First byte: exponent
+    compact_target[1] = target[size - 1 as usize]; // Mantissa byte 1
+    compact_target[2] = target[size + 0 as usize]; // Mantissa byte 2
+    compact_target[3] = target[size + 1 as usize]; // Mantissa byte 3
+
     let result = u32::from_be_bytes(compact_target);
     println!("[DEBUG] Bits: {}", result);
     result
 }
 
+/// Calculates a new difficulty target based on the time taken to mine the previous epoch
+///
+/// Bitcoin adjusts its mining difficulty every 2016 blocks to maintain an average
+/// 10-minute block time. This function implements this adjustment by:
+/// 1. Calculating the actual time taken to mine the last 2016 blocks
+/// 2. Comparing it to the expected time (2 weeks)
+/// 3. Adjusting the target proportionally
+/// 4. Clamping to allowed adjustment range (1/4 to 4x change)
+/// 5. Enforcing the network's maximum target
+///
+/// # Arguments
+///
+/// * `epoch_start_time` - The timestamp of the first block in the epoch
+/// * `last_timestamp` - The timestamp of the last block in the epoch
+/// * `current_target` - The current difficulty target in compact form
+///
+/// # Returns
+///
+/// A 32-byte array containing the new 256-bit target
 fn calculate_new_difficulty(
     epoch_start_time: u32,
     last_timestamp: u32,
     current_target: u32,
 ) -> [u8; 32] {
     println!("[DEBUG] Calculating new difficulty");
+    // Calculate actual time taken to mine the epoch
     let mut actual_timespan = last_timestamp - epoch_start_time;
+
+    // Clamp the adjustment to prevent too extreme changes
     if actual_timespan < EXPECTED_EPOCH_TIMESPAN / 4 {
+        // Minimum 1/4 the expected time (maximum 4x difficulty increase)
         actual_timespan = EXPECTED_EPOCH_TIMESPAN / 4;
     } else if actual_timespan > EXPECTED_EPOCH_TIMESPAN * 4 {
+        // Maximum 4x the expected time (maximum 1/4 difficulty decrease)
         actual_timespan = EXPECTED_EPOCH_TIMESPAN * 4;
     }
 
+    // Convert current target to full 256-bit representation
     let new_target_bytes = bits_to_target(current_target);
+
+    // Calculate the new target by scaling based on the time ratio
+    // new_target = current_target * (actual_time / expected_time)
     let mut new_target = U256::from_be_bytes(new_target_bytes)
         .wrapping_mul(&U256::from(actual_timespan))
         .wrapping_div(&U256::from(EXPECTED_EPOCH_TIMESPAN));
 
+    // Ensure new target doesn't exceed network maximum
     if new_target > NETWORK_PARAMS.max_target {
         new_target = NETWORK_PARAMS.max_target;
     }
+
     let result = new_target.to_be_bytes();
     println!("[DEBUG] New Difficulty: {:?}", result);
     result
 }
 
+/// Validates that a block hash satisfies the required difficulty target
+///
+/// In Bitcoin, a block hash must be less than or equal to the current target
+/// to be considered valid. This function compares the block hash with the
+/// target and panics if the hash is too large.
+///
+/// The comparison is done byte-by-byte, starting with the most significant
+/// bytes, which makes the code more efficient by allowing early return
+/// once a definitive comparison is made.
+///
+/// # Arguments
+///
+/// * `hash` - The block hash to validate
+/// * `target_bytes` - The current difficulty target
+///
+/// # Panics
+///
+/// If the hash is greater than the target (block doesn't meet difficulty requirement)
 fn check_hash_valid(hash: &[u8; 32], target_bytes: &[u8; 32]) {
     println!("[DEBUG] Checking hash validity");
     for i in 0..32 {
+        // Compare bytes in reverse order (from most to least significant)
         if hash[31 - i] < target_bytes[i] {
+            // Hash is less than target, block is valid
             return;
         } else if hash[31 - i] > target_bytes[i] {
+            // Hash is greater than target, block is invalid
             panic!("Hash is not valid");
         }
+        // If bytes are equal, continue to the next byte
     }
     println!("[DEBUG] Hash is valid");
 }
 
+/// Calculates the work value from a target
+///
+/// In Bitcoin, work is defined as the inverse of the target, to represent
+/// the expected number of hashes needed to find a block. This allows work
+/// to be additive across blocks, so the total work of a chain can be calculated.
+///
+/// The formula used is: work = (2^256) / (target + 1)
+///
+/// # Arguments
+///
+/// * `target` - The 256-bit target as a 32-byte array
+///
+/// # Returns
+///
+/// The work value as a 256-bit number
 fn calculate_work(target: &[u8; 32]) -> U256 {
     println!("[DEBUG] Calculating work from target");
     let target = U256::from_be_slice(target);
+    // Add 1 to the target to handle the case where target = 0
     let target_plus_one = target.saturating_add(&U256::ONE);
+    // Calculate work as 2^256 / (target + 1)
     let result = U256::MAX.wrapping_div(&target_plus_one);
     println!("[DEBUG] Work: {:?}", result);
     result
 }
 
-/// The output of the header chain circuit.
+/// The output data produced by the header chain verification circuit
+///
+/// This structure represents the public output of a Bitcoin header chain verification
+/// executed in a zero-knowledge circuit. It contains:
+///
+/// - `method_id`: A unique identifier for the verification method used
+/// - `chain_state`: The complete state of the blockchain after verification
+///
+/// This output serves as both a record of the verification result and potentially
+/// as input to future verifications, allowing incremental verification of the
+/// Bitcoin blockchain in a zero-knowledge context.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct BlockHeaderCircuitOutput {
+    /// Unique identifier for the verification method
     pub method_id: [u32; 8],
+    /// The resulting state of the blockchain after verification
     pub chain_state: HeaderChainState,
 }
 
-/// The input proof of the header chain circuit.
-/// The proof can be either None (implying the beginning) or a Succinct Risc0 proof.
+/// Represents the previous proof state for header chain verification
+///
+/// This enum allows for two possible states when verifying a header chain:
+///
+/// - `GenesisBlock`: Indicates we're starting from the beginning of the blockchain
+///   (no previous proof is required)
+/// - `PrevProof`: Contains the output from a previous header chain verification,
+///   which serves as the starting point for the current verification
+///
+/// This type enables incremental verification of the Bitcoin blockchain,
+/// allowing verifiers to build on previous proofs rather than having to
+/// verify the entire chain from genesis each time.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub enum HeaderChainPrevProofType {
+    /// Starting point with no previous verification (genesis block)
     GenesisBlock,
+    /// Continuation from a previous verification
     PrevProof(BlockHeaderCircuitOutput),
 }
 
-/// The input of the header chain circuit.
+/// The input data required for header chain verification
+///
+/// This structure contains all the information needed to verify a sequence
+/// of Bitcoin block headers in a zero-knowledge circuit:
+///
+/// - `method_id`: A unique identifier for the verification method
+/// - `prev_proof`: The state of the blockchain before this verification
+/// - `block_headers`: The sequence of new block headers to verify
+///
+/// Together with the verification code, this input allows anyone to prove
+/// that a sequence of block headers follows Bitcoin's consensus rules and
+/// builds on a previously verified chain state.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct HeaderChainCircuitInput {
+    /// Unique identifier for the verification method
     pub method_id: [u32; 8],
+    /// The state of the blockchain before verification
     pub prev_proof: HeaderChainPrevProofType,
+    /// The new block headers to verify
     pub block_headers: Vec<CircuitBlockHeader>,
 }
 

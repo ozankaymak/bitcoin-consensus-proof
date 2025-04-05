@@ -735,10 +735,10 @@ mod tests {
         storage.update_with_batch(root_after_insert, batch)?;
 
         // Now verify the update proof for the new UTXO
-        // let (value_opt, inclusion_proof) = tree.get_with_proof(utxo_created_key_hash, 2)?;
+        let (value_opt, inclusion_proof) = tree.get_with_proof(utxo_created_key_hash, 2)?;
         println!("HOST SIDE: KeyOutPoint-UTXO taken from the tree with proof");
         println!("HOST SIDE: Value: {:?}", value_opt);
-        // println!("HOST SIDE: Proof: {:?}", inclusion_proof);
+        println!("HOST SIDE: Proof: {:?}", inclusion_proof);
         assert_eq!(value_opt, Some(utxo_created_bytes.0.clone()));
         // let update_proof = UpdateMerkleProof::new(vec![inclusion_proof]);
         // println!("HOST SIDE: update_proof: {:?}", update_proof);

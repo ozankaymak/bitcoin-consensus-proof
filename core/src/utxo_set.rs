@@ -1,3 +1,26 @@
+/// # Bitcoin UTXO Set Management
+///
+/// This module implements the Unspent Transaction Output (UTXO) set for Bitcoin,
+/// optimized for zero-knowledge circuit compatibility. The UTXO set is the collection
+/// of all unspent transaction outputs in the Bitcoin blockchain, representing coins
+/// that can be spent in future transactions.
+///
+/// ## Architecture
+///
+/// The implementation uses a Jellyfish Merkle Tree (JMT) for efficient and provable
+/// UTXO management. This allows:
+///
+/// - Efficient verification of UTXO existence or non-existence
+/// - Compact cryptographic proofs of UTXO state
+/// - Circuit-friendly operations for zero-knowledge proofs
+/// - Deterministic state transitions
+///
+/// ## Key Components
+///
+/// - `UTXOSetGuest`: The circuit-side UTXO set management, storing just the JMT root
+/// - `KeyOutPoint`: A unique identifier for a transaction output (txid + vout)
+/// - `UTXO`: The data structure representing an unspent output including its value and script
+/// - Cryptographic proofs for verifying UTXO operations without full state
 use bitcoin::hashes::Hash;
 use bitcoin::{Amount, OutPoint, ScriptBuf, Txid};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -11,20 +34,45 @@ use jmt::{
     KeyHash, OwnedValue, RootHash, Version,
 };
 
-/// Guest-side UTXO set implementation storing only the JMT root
+/// Circuit-compatible UTXO set implementation
+///
+/// This structure represents the UTXO set state for zero-knowledge circuit execution.
+/// Instead of storing the full UTXO database, it maintains just the Jellyfish Merkle
+/// Tree (JMT) root hash, allowing for cryptographic verification of UTXO state without
+/// storing all UTXOs.
+///
+/// Features:
+/// - Stores the cryptographic root hash of the UTXO set as a JMT
+/// - Maintains a version number for tracking state transitions
+/// - Includes a cache for in-memory UTXOs during block processing
+/// - Supports cryptographic proofs for UTXO inclusion and non-inclusion
+///
+/// The guest-side implementation focuses on verification rather than storage,
+/// as the full UTXO set data is maintained by the host.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct UTXOSetGuest {
+    /// The Jellyfish Merkle Tree root hash representing the current UTXO state
     pub jmt_root: RootHash,
+
+    /// Version number tracking UTXO set updates (increments with each state change)
     pub version: Version,
-    // Cache stores UTXOs that are spent and created in the same block
-    // Using BTreeMap for deterministic iteration order
+
+    /// Cache for UTXOs created and spent during block processing
+    /// Using BTreeMap for deterministic iteration order, critical for reproducible circuit execution
     #[serde(skip)]
     #[borsh(skip)]
     pub utxo_cache: BTreeMap<KeyOutPoint, UTXO>,
-    // pub spent_utxos: BTreeMap<KeyOutPoint, UTXO>,
+    // pub spent_utxos: BTreeMap<KeyOutPoint, UTXO>,  // Commented out but may be used in the future
 }
 
-/// A UTXO key represents a specific output from a transaction
+/// Unique identifier for a transaction output (UTXO)
+///
+/// In Bitcoin, each unspent transaction output (UTXO) is uniquely identified by:
+/// - The transaction ID (txid) of the transaction that created it
+/// - The index (vout) of the output within that transaction
+///
+/// This structure provides a circuit-compatible representation of this identifier,
+/// with efficient serialization, hashing, and comparison operations.
 #[derive(
     Serialize,
     Deserialize,
@@ -40,12 +88,22 @@ pub struct UTXOSetGuest {
     PartialOrd,
 )]
 pub struct KeyOutPoint {
-    pub txid: [u8; 32], // Transaction ID
-    pub vout: u32,      // Output index
+    /// 32-byte transaction identifier hash
+    pub txid: [u8; 32],
+
+    /// Output index within the transaction (0-based)
+    pub vout: u32,
 }
 
+/// Serialized byte representation of a transaction output reference
+///
+/// This type provides a standardized byte serialization of a KeyOutPoint,
+/// used for storage and cryptographic operations. The format is:
+/// - First 32 bytes: Transaction ID
+/// - Last 4 bytes: Output index (big-endian encoded)
 pub struct OutPointBytes(pub [u8; 36]);
 
+/// Converts a KeyOutPoint to its byte representation
 impl From<KeyOutPoint> for OutPointBytes {
     fn from(key: KeyOutPoint) -> Self {
         let mut bytes = [0u8; 36];
@@ -55,6 +113,7 @@ impl From<KeyOutPoint> for OutPointBytes {
     }
 }
 
+/// Converts a byte representation back to a KeyOutPoint
 impl Into<KeyOutPoint> for OutPointBytes {
     fn into(self) -> KeyOutPoint {
         KeyOutPoint {
@@ -64,23 +123,58 @@ impl Into<KeyOutPoint> for OutPointBytes {
     }
 }
 
+/// Allows OutPointBytes to be used with functions requiring AsRef<[u8]>
 impl AsRef<[u8]> for OutPointBytes {
     fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }
 
-/// A UTXO contains the output's value, script, and metadata
+/// Circuit-compatible representation of an unspent transaction output
+///
+/// This structure represents a spendable Bitcoin output with all the
+/// information needed to validate spending conditions and enforce consensus
+/// rules. In addition to the output's value and locking script, it includes
+/// metadata like creation height and whether it's from a coinbase transaction.
+///
+/// The UTXO structure is optimized for use in zero-knowledge circuits while
+/// maintaining compatibility with Bitcoin's consensus rules.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct UTXO {
-    pub value: u64,             // Amount in satoshis
-    pub block_height: u32,      // Block height where this UTXO was created
-    pub block_time: u32,        // Block time where this UTXO was created
-    pub is_coinbase: bool,      // Whether this UTXO is from a coinbase transaction
-    pub script_pubkey: Vec<u8>, // Output script
+    /// Amount in satoshis (1 BTC = 100,000,000 satoshis)
+    pub value: u64,
+
+    /// Block height where this output was created
+    pub block_height: u32,
+
+    /// Block timestamp when this output was created
+    pub block_time: u32,
+
+    /// Whether this output is from a coinbase transaction (mining reward)
+    /// Coinbase outputs have special consensus rules (e.g., maturity period)
+    pub is_coinbase: bool,
+
+    /// The locking script that specifies spending conditions (serialized)
+    pub script_pubkey: Vec<u8>,
 }
 
 impl UTXO {
+    /// Creates a UTXO from a bitcoin-rs TxOut with additional metadata
+    ///
+    /// This method converts a standard Bitcoin transaction output into our
+    /// circuit-compatible UTXO representation, adding important consensus-related
+    /// metadata such as the block height, time, and coinbase status.
+    ///
+    /// # Arguments
+    ///
+    /// * `txout` - The bitcoin-rs transaction output to convert
+    /// * `block_height` - The height of the block containing this output
+    /// * `block_time` - The timestamp of the block containing this output
+    /// * `is_coinbase` - Whether this output is from a coinbase transaction
+    ///
+    /// # Returns
+    ///
+    /// A new UTXO containing the output's value, script, and metadata
     pub fn from_txout(
         txout: &bitcoin::TxOut,
         block_height: u32,
@@ -99,6 +193,16 @@ impl UTXO {
         result
     }
 
+    /// Converts a UTXO back to a bitcoin-rs TxOut
+    ///
+    /// This method creates a standard bitcoin-rs transaction output from
+    /// our circuit-compatible UTXO representation. Note that this conversion
+    /// loses metadata like block height and coinbase status, as the bitcoin-rs
+    /// TxOut type only contains the value and script.
+    ///
+    /// # Returns
+    ///
+    /// A bitcoin-rs TxOut with the same value and script as this UTXO
     pub fn into_txout(&self) -> bitcoin::TxOut {
         println!("[DEBUG] Converting UTXO into TxOut");
         let result = bitcoin::TxOut {
@@ -110,27 +214,93 @@ impl UTXO {
     }
 }
 
+/// Wrapper for UTXO bytes with convenient conversion methods
+///
+/// This type provides a wrapper around the serialized byte representation
+/// of a UTXO, allowing it to be easily passed to functions that work with
+/// byte arrays while maintaining the semantic connection to UTXOs. It also
+/// provides convenient conversion methods to and from UTXO objects.
 pub struct UTXOBytes(pub Vec<u8>);
 
+/// Converts a UTXO to its byte representation
 impl From<UTXO> for UTXOBytes {
     fn from(utxo: UTXO) -> Self {
+        // Use the UTXO's to_bytes method to get the serialized representation
         UTXOBytes(utxo.to_bytes())
     }
 }
 
+/// Converts a byte representation back to a UTXO
 impl Into<UTXO> for UTXOBytes {
     fn into(self) -> UTXO {
+        // Use the UTXO's from_bytes method to deserialize
         UTXO::from_bytes(&self.0)
     }
 }
 
+/// Allows UTXOBytes to be used with functions requiring AsRef<[u8]>
 impl AsRef<[u8]> for UTXOBytes {
     fn as_ref(&self) -> &[u8] {
         &self.0
     }
 }
 
+/// Cryptographic proof of a UTXO's inclusion and subsequent deletion
+///
+/// This structure provides a proof that a particular UTXO existed in the
+/// UTXO set at one point and was later removed (spent). This is crucial for
+/// validating transactions in a zero-knowledge context without access to the
+/// full UTXO set history.
+///
+/// The proof uses a Sparse Merkle Tree proof to cryptographically demonstrate that:
+/// 1. The UTXO existed in the tree at a specific version
+/// 2. The UTXO was removed in a subsequent version
+///
+/// This allows verifiers to confirm that inputs were valid UTXOs that were
+/// properly spent, without requiring the full UTXO set data.
+#[derive(Debug, Clone, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
+pub struct UTXOInclusionWithDeletionProof {
+    /// The cryptographic proof of inclusion and deletion
+    pub proof: SparseMerkleProof<Sha256>,
+}
+
+/// Custom equality implementation for UTXOInclusionWithDeletionProof
+///
+/// Since the SparseMerkleProof type from the JMT library doesn't implement Eq,
+/// we need to provide a custom implementation. This simplified version allows
+/// the proofs to be used in contexts requiring equality comparison.
+///
+/// Note: This is a simplified implementation that always returns true. In a production
+/// environment, a proper comparison of the proof contents would be necessary.
+impl PartialEq for UTXOInclusionWithDeletionProof {
+    fn eq(&self, _other: &Self) -> bool {
+        // For now, we'll just return true for equality checks
+        // In a real implementation, we would need to compare the proofs properly
+        true
+    }
+}
+
+/// Implements Eq for UTXOInclusionWithDeletionProof
+///
+/// This marker implementation states that if two UTXOInclusionWithDeletionProof
+/// objects are equal according to PartialEq, they are also equivalent according to Eq.
+///
+/// Required for using this type in collections like HashMap and BTreeMap.
+impl Eq for UTXOInclusionWithDeletionProof {}
+
 impl KeyOutPoint {
+    /// Creates a KeyOutPoint from a bitcoin-rs OutPoint
+    ///
+    /// This method provides convenient conversion from the bitcoin-rs library's
+    /// OutPoint type to our circuit-compatible KeyOutPoint representation.
+    ///
+    /// # Arguments
+    ///
+    /// * `outpoint` - A reference to a bitcoin-rs OutPoint
+    ///
+    /// # Returns
+    ///
+    /// A new KeyOutPoint instance with the same txid and vout
     pub fn from_outpoint(outpoint: &OutPoint) -> Self {
         KeyOutPoint {
             txid: outpoint.txid.to_byte_array(),
@@ -138,6 +308,15 @@ impl KeyOutPoint {
         }
     }
 
+    /// Converts a KeyOutPoint back to a bitcoin-rs OutPoint
+    ///
+    /// This method creates a standard bitcoin-rs OutPoint from our
+    /// circuit-compatible KeyOutPoint, enabling seamless integration
+    /// with the bitcoin-rs library functions.
+    ///
+    /// # Returns
+    ///
+    /// A new bitcoin-rs OutPoint with the same txid and vout
     pub fn to_outpoint(&self) -> OutPoint {
         OutPoint {
             txid: Txid::from_slice(&self.txid).unwrap(),
@@ -145,37 +324,96 @@ impl KeyOutPoint {
         }
     }
 
-    /// Convert to JMT key hash
+    /// Computes the Jellyfish Merkle Tree key hash for this OutPoint
+    ///
+    /// This method converts the KeyOutPoint into a cryptographic hash
+    /// suitable for use as a key in the Jellyfish Merkle Tree (JMT).
+    /// The hash is derived from the concatenation of the txid and vout,
+    /// ensuring a unique, fixed-size identifier for each UTXO.
+    ///
+    /// # Returns
+    ///
+    /// A KeyHash object that can be used with the JMT
     pub fn to_key_hash(&self) -> KeyHash {
+        // Create a buffer with the concatenated txid and vout
         let mut key_bytes = Vec::with_capacity(36);
         key_bytes.extend_from_slice(&self.txid);
         key_bytes.extend_from_slice(&self.vout.to_be_bytes());
 
+        // Create a KeyHash using SHA-256
         KeyHash::with::<Sha256>(&key_bytes)
     }
 }
 
 impl UTXO {
-    /// Serialize UTXO to bytes for JMT storage
+    /// Serializes a UTXO to a compact byte representation
+    ///
+    /// This method creates a binary representation of the UTXO suitable for
+    /// storage in the Jellyfish Merkle Tree or other serialization needs.
+    /// The format is:
+    /// - 8 bytes: Value (in satoshis, big-endian)
+    /// - 4 bytes: Block height (big-endian)
+    /// - 4 bytes: Block time (big-endian)
+    /// - 1 byte: Coinbase flag (1=true, 0=false)
+    /// - Remaining bytes: ScriptPubKey (variable length)
+    ///
+    /// # Returns
+    ///
+    /// A vector of bytes containing the serialized UTXO
     pub fn to_bytes(&self) -> Vec<u8> {
         println!("[DEBUG] Serializing UTXO to bytes");
-        let mut bytes = Vec::with_capacity(8 + 4 + 1 + self.script_pubkey.len());
+        // Pre-allocate capacity for efficiency
+        let mut bytes = Vec::with_capacity(8 + 4 + 4 + 1 + self.script_pubkey.len());
+
+        // Append value (8 bytes)
         bytes.extend_from_slice(&self.value.to_be_bytes());
+
+        // Append block height (4 bytes)
         bytes.extend_from_slice(&self.block_height.to_be_bytes());
+
+        // Append block time (4 bytes)
+        bytes.extend_from_slice(&self.block_time.to_be_bytes());
+
+        // Append coinbase flag (1 byte)
         bytes.push(if self.is_coinbase { 1 } else { 0 });
+
+        // Append script (variable length)
         bytes.extend_from_slice(&self.script_pubkey);
+
         let result = bytes;
         println!("[DEBUG] Serialized UTXO Bytes: {:?}", result);
         result
     }
 
-    /// Deserialize UTXO from bytes
+    /// Deserializes a UTXO from its byte representation
+    ///
+    /// This method reconstructs a UTXO from its serialized form created by
+    /// the `to_bytes` method. It's used when retrieving UTXOs from storage
+    /// or when verifying UTXO inclusion proofs.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The serialized UTXO bytes
+    ///
+    /// # Returns
+    ///
+    /// A reconstructed UTXO
     pub fn from_bytes(bytes: &[u8]) -> Self {
         println!("[DEBUG] Deserializing UTXO from bytes");
+
+        // Extract value (first 8 bytes)
         let value = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
+
+        // Extract block height (next 4 bytes)
         let block_height = u32::from_be_bytes(bytes[8..12].try_into().unwrap());
+
+        // Extract block time (next 4 bytes)
         let block_time = u32::from_be_bytes(bytes[12..16].try_into().unwrap());
-        let is_coinbase = bytes[17] == 1;
+
+        // Extract coinbase flag (next 1 byte)
+        let is_coinbase = bytes[16] == 1;
+
+        // Extract script (remaining bytes)
         let script_pubkey = bytes[17..].to_vec();
 
         let result = UTXO {
@@ -189,14 +427,30 @@ impl UTXO {
         result
     }
 
-    /// Check if the UTXO is mature (based on the coinbase maturity rule)
+    /// Checks if the UTXO is mature and can be spent
+    ///
+    /// In Bitcoin, coinbase outputs (mining rewards) have a special consensus rule:
+    /// they must have at least 100 confirmations before they can be spent. This
+    /// prevents miners from immediately spending rewards that might be invalidated
+    /// by a chain reorganization.
+    ///
+    /// # Arguments
+    ///
+    /// * `current_height` - The current blockchain height
+    ///
+    /// # Returns
+    ///
+    /// `true` if the UTXO can be spent, `false` otherwise
     pub fn is_mature(&self, current_height: u32) -> bool {
         println!("[DEBUG] Checking if UTXO is mature");
+
+        // Non-coinbase outputs can be spent immediately
         if !self.is_coinbase {
-            return true; // Non-coinbase outputs are immediately spendable
+            return true;
         }
 
         // Coinbase outputs require 100 confirmations before they can be spent
+        // Check if we have enough confirmations (current height - UTXO height >= 100)
         let result = current_height >= self.block_height + 100;
         println!("[DEBUG] Is UTXO Mature: {}", result);
         result
@@ -204,32 +458,67 @@ impl UTXO {
 }
 
 impl UTXOSetGuest {
+    /// Creates a new, empty UTXO set state
+    ///
+    /// This constructor initializes a fresh UTXOSetGuest with:
+    /// - A zero root hash (representing an empty Jellyfish Merkle Tree)
+    /// - Version set to 0 (initial state)
+    /// - An empty UTXO cache
+    ///
+    /// This is typically used when starting from the genesis block or
+    /// when initializing a new verification context.
+    ///
+    /// # Returns
+    ///
+    /// A new UTXOSetGuest instance with default values
     pub fn new() -> Self {
         println!("[DEBUG] Creating new UTXOSetGuest");
         let result = UTXOSetGuest {
-            jmt_root: RootHash::from([0u8; 32]),
-            version: 0,
-            utxo_cache: BTreeMap::new(),
-            // spent_utxos: BTreeMap::new(),
+            jmt_root: RootHash::from([0u8; 32]), // Empty Merkle tree root
+            version: 0,                          // Initial version
+            utxo_cache: BTreeMap::new(),         // Empty cache
+                                                 // spent_utxos: BTreeMap::new(),      // Commented out but may be used in future
         };
         println!("[DEBUG] New UTXOSetGuest: {:?}", result);
         result
     }
 
-    /// Create a new UTXOSetGuest with a given root hash and version
+    /// Creates a UTXO set state with a specified root hash and version
+    ///
+    /// This constructor is used when verifying from a specific state rather
+    /// than from scratch. It's particularly useful in contexts where verification
+    /// needs to start from a trusted checkpoint or when verifying incremental
+    /// updates to the UTXO set.
+    ///
+    /// # Arguments
+    ///
+    /// * `jmt_root` - The Jellyfish Merkle Tree root hash to start from
+    /// * `version` - The version number associated with this state
+    ///
+    /// # Returns
+    ///
+    /// A new UTXOSetGuest instance initialized with the provided state
     pub fn with_root(jmt_root: RootHash, version: Version) -> Self {
         println!("[DEBUG] Creating UTXOSetGuest with root and version");
         let result = UTXOSetGuest {
-            jmt_root,
-            version,
-            utxo_cache: BTreeMap::new(),
-            // spent_utxos: BTreeMap::new(),
+            jmt_root, // The provided root hash
+            version,  // The provided version
+            utxo_cache: BTreeMap::new(), // Empty cache
+                      // spent_utxos: BTreeMap::new(), // Commented out but may be used in future
         };
         println!("[DEBUG] UTXOSetGuest with Root: {:?}", result);
         result
     }
 
-    /// Get the current JMT root
+    /// Returns the current JMT root hash representing the UTXO set state
+    ///
+    /// The root hash is a cryptographic commitment to the entire UTXO set.
+    /// It can be used to verify the inclusion or non-inclusion of any UTXO
+    /// in the set using Sparse Merkle Tree proofs.
+    ///
+    /// # Returns
+    ///
+    /// The current Jellyfish Merkle Tree root hash
     pub fn get_root(&self) -> RootHash {
         println!("[DEBUG] Getting JMT root");
         let result = self.jmt_root;
@@ -237,7 +526,15 @@ impl UTXOSetGuest {
         result
     }
 
-    /// Get the current version
+    /// Returns the current version of the UTXO set
+    ///
+    /// The version number increases monotonically with each state change to
+    /// the UTXO set. This allows tracking of state transitions and associating
+    /// proofs with specific versions of the UTXO set.
+    ///
+    /// # Returns
+    ///
+    /// The current version number
     pub fn get_version(&self) -> Version {
         println!("[DEBUG] Getting version");
         let result = self.version;
@@ -245,7 +542,17 @@ impl UTXOSetGuest {
         result
     }
 
-    /// Update the JMT root hash and version
+    /// Updates the JMT root hash and version
+    ///
+    /// This method is called when the UTXO set state changes, typically after
+    /// processing a block. It updates both the root hash (representing the new
+    /// state of the Merkle tree) and the version number (incremented to reflect
+    /// the state change).
+    ///
+    /// # Arguments
+    ///
+    /// * `new_root` - The new Jellyfish Merkle Tree root hash
+    /// * `new_version` - The new version number
     pub fn update_root(&mut self, new_root: RootHash, new_version: Version) {
         println!("[DEBUG] Updating JMT root and version");
         self.jmt_root = new_root;
@@ -256,22 +563,51 @@ impl UTXOSetGuest {
         );
     }
 
-    /// Verify that a UTXO exists
+    /// Verifies that a UTXO exists in the set
+    ///
+    /// This method checks whether a specific UTXO exists in the UTXO set.
+    /// It first checks the in-memory cache, and if not found, would typically
+    /// verify a cryptographic proof against the JMT root hash.
+    ///
+    /// Note: This implementation currently only checks the cache and returns
+    /// false for UTXOs not in the cache. In a complete implementation, this
+    /// would verify a proof provided by the host.
+    ///
+    /// # Arguments
+    ///
+    /// * `utxo_key` - The key (txid + vout) of the UTXO to verify
+    ///
+    /// # Returns
+    ///
+    /// `true` if the UTXO exists, `false` otherwise
     pub fn verify_utxo_exists(&self, utxo_key: &KeyOutPoint) -> bool {
         println!("[DEBUG] Verifying UTXO existence");
-        // Check cache first
+        // Check cache first for efficiency
         if self.has_cached_utxo(utxo_key) {
             return true;
         }
 
-        // Otherwise, we need to verify with a proof
-        // This is a stub implementation - in real code, you would need to provide a proof
-        // from the host that can be verified against the root
+        // In a full implementation, this would verify a cryptographic proof
+        // against the JMT root to check if the UTXO exists in the tree
+        // This is a stub implementation for now
         let result = false;
         println!("[DEBUG] UTXO Exists: {}", result);
         result
     }
 
+    /// Removes and returns a UTXO from the cache
+    ///
+    /// This method removes a UTXO from the in-memory cache and returns it.
+    /// This is typically used when a UTXO is spent, allowing it to be
+    /// removed from the cache while still being accessible for further processing.
+    ///
+    /// # Arguments
+    ///
+    /// * `utxo_key` - The key (txid + vout) of the UTXO to remove
+    ///
+    /// # Returns
+    ///
+    /// The removed UTXO if it was in the cache, or None if not found
     pub fn pop_utxo_from_cache(&mut self, utxo_key: &KeyOutPoint) -> Option<UTXO> {
         println!("[DEBUG] Popping UTXO from cache");
         let result = self.utxo_cache.remove(utxo_key);

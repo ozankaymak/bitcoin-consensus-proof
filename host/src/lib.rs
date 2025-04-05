@@ -3,7 +3,7 @@ use std::{fs::File, io::Read, path::Path};
 use anyhow::Result;
 use bitcoin::Block;
 use bitcoin_consensus_core::{
-    utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXO},
+    utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXOInclusionWithDeletionProof, UTXO},
     TransactionUTXOProofs, TransactionUpdateProof, UTXOInsertionProof,
 };
 use jmt::{
@@ -92,7 +92,7 @@ pub fn generate_utxo_inclusion_proof(
 pub fn update_utxo_set(
     db_path: impl AsRef<Path>,
     updates: Vec<(KeyOutPoint, Option<UTXO>)>,
-) -> Result<(RootHash, UTXOInclusioWithDeletionProof)> {
+) -> Result<(RootHash, UTXOInclusionWithDeletionProof)> {
     info!("Updating UTXO set with {} changes", updates.len());
     info!("  Database path: {}", db_path.as_ref().display());
 
@@ -165,7 +165,7 @@ pub fn update_utxo_set(
     };
 
     // Create inclusion proof bundle
-    let inclusion_proof = UTXOInclusioWithDeletionProof { proof };
+    let inclusion_proof = UTXOInclusionWithDeletionProof { proof };
     info!("  Created inclusion proof bundle");
 
     Ok((new_root, inclusion_proof))

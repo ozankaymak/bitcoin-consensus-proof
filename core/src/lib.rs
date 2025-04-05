@@ -1,3 +1,31 @@
+/// # Bitcoin Consensus Proof Core Library
+///
+/// This library implements Bitcoin's consensus rules in a manner compatible with
+/// zero-knowledge proof circuits. It allows for the cryptographic verification of
+/// Bitcoin blocks and transactions without revealing the full blockchain data.
+///
+/// ## Key Components
+///
+/// The library provides:
+///
+/// - A circuit-compatible implementation of Bitcoin's consensus rules
+/// - UTXO set management using Jellyfish Merkle Trees
+/// - Block and transaction validation
+/// - Proof structures for efficiently verifying blockchain state
+/// - Support for SegWit, timelocks, and other Bitcoin features
+///
+/// ## Architecture
+///
+/// The implementation follows a modular design with components for:
+///
+/// 1. **Block Validation**: Verifying block structure, proof-of-work, and timestamps
+/// 2. **Transaction Validation**: Checking signatures, scripts, and transaction rules
+/// 3. **UTXO Management**: Tracking unspent transaction outputs efficiently
+/// 4. **State Transitions**: Applying validated blocks to the blockchain state
+/// 5. **Proof Generation/Verification**: Creating and checking cryptographic proofs
+///
+/// This library is designed to run within a zero-knowledge virtual machine (ZKVM)
+/// to produce succinct proofs of Bitcoin consensus rule adherence.
 use std::collections::{BTreeMap, BTreeSet};
 
 use bitcoin::{
@@ -21,71 +49,172 @@ use transaction::CircuitTransaction;
 use utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXO};
 use zkvm::ZkvmGuest;
 
+/// Bitcoin Merkle tree implementation (transaction hashing, block commitments)
 pub mod bitcoin_merkle;
+/// Block structure and validation
 pub mod block;
+/// Bitcoin protocol constants
 pub mod constants;
+/// Cryptographic hash function implementations
 pub mod hashes;
+/// Block header chain verification
 pub mod header_chain;
+/// Network parameters for different Bitcoin networks
 pub mod params;
+/// Transaction structure and validation
 pub mod transaction;
+/// UTXO set management
 pub mod utxo_set;
+/// Zero-knowledge virtual machine interface
 pub mod zkvm;
 
+/// Type alias for a JMT root hash after a UTXO has been deleted
 pub type NewRootAfterUTXODeletion = RootHash;
+
+/// Type alias for a JMT root hash after a UTXO has been inserted
 pub type NewRootAfterUTXOInsertion = RootHash;
+
+/// Proof structure for transaction UTXO updates
+///
+/// This type represents the cryptographic proof for transaction UTXO updates:
+/// - SparseMerkleProof: The Merkle proof showing UTXO inclusion
+/// - UTXO: The UTXO data that was included
+/// - NewRootAfterUTXODeletion: The new JMT root hash after deletion
+///
+/// The Option wrapper allows for handling inputs that don't require JMT updates
+/// (e.g., inputs spending UTXOs created in the same block)
 pub type TransactionUpdateProof =
     Vec<Option<(SparseMerkleProof<Sha256>, UTXO, NewRootAfterUTXODeletion)>>;
+
+/// Type alias for a JMT root hash after a complete transaction has been processed
 pub type NewRootAfterTransaction = RootHash;
 
-/// The input proof of the Bitcoin Consensus circuit.
-/// The proof can be either None (implying the beginning) or a Succinct Risc0 proof.
+/// Previous proof type for the Bitcoin consensus circuit
+///
+/// This enum represents the previous state for a Bitcoin consensus verification:
+/// - GenesisBlock: Starting from the beginning of the blockchain
+/// - PrevProof: Building on a previous verification's output
+///
+/// This enables incremental verification of the Bitcoin blockchain, where each
+/// proof can build on previous proofs rather than starting from the genesis block.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub enum BitcoinConsensusPrevProofType {
+    /// Start verification from the genesis block (no previous state)
     GenesisBlock,
+    /// Continue verification from a previous proof's output state
     PrevProof(BitcoinConsensusCircuitOutput),
 }
-/// The input of the Bitcoin Consensus circuit.
+
+/// Input data for the Bitcoin consensus verification circuit
+///
+/// This structure contains all data needed to verify a sequence of Bitcoin blocks:
+/// - method_id: Unique identifier for the verification method
+/// - prev_proof: Previous state to build upon (or genesis)
+/// - blocks: The sequence of blocks to verify
+/// - utxo_inclusion_proofs: Proofs for transaction input UTXOs
+/// - utxo_insertion_proofs: Proofs for transaction output UTXOs
+///
+/// Together with the verification code, this input allows generating a zero-knowledge
+/// proof that the blocks follow Bitcoin's consensus rules.
 #[derive(Debug, BorshDeserialize, BorshSerialize)]
 pub struct BitcoinConsensusCircuitInput {
+    /// Unique identifier for the verification method
     pub method_id: [u32; 8],
+    /// Previous state to build upon
     pub prev_proof: BitcoinConsensusPrevProofType,
+    /// The blocks to verify
     pub blocks: Vec<CircuitBlock>,
+    /// Proofs for transaction input UTXOs
     pub utxo_inclusion_proofs: Vec<Vec<TransactionUTXOProofs>>,
+    /// Proofs for transaction output UTXOs
     pub utxo_insertion_proofs: Vec<UTXOInsertionProof>, // TODO: Maybe these two proofs can be combined into a Witness.
 }
 
+/// Cryptographic proofs for verifying a transaction's UTXOs
+///
+/// This structure contains the proofs needed to verify a transaction's UTXO operations:
+/// - update_proof: Proofs for spending UTXOs (deletions from the UTXO set)
+/// - new_root: The new JMT root hash after processing the transaction
+///
+/// These proofs allow efficient verification of transaction validity without
+/// requiring access to the full UTXO set.
 #[derive(Debug, BorshDeserialize, BorshSerialize)]
 pub struct TransactionUTXOProofs {
+    /// Proofs for the UTXOs spent by this transaction
     pub update_proof: TransactionUpdateProof,
+    /// The new JMT root hash after processing the transaction
     pub new_root: NewRootAfterTransaction,
     // pub spent_with_proof: BTreeMap<KeyOutPoint, UTXO>,
     // pub spent_from_cache: BTreeMap<KeyOutPoint, UTXO>, // No need, since we can check if a utxo is cached.
     // pub created: Vec<(KeyOutPoint, UTXO)>,
 }
 
+/// Proof for inserting a new UTXO into the Jellyfish Merkle Tree
+///
+/// This structure provides cryptographic evidence that a UTXO was correctly
+/// added to the UTXO set, including:
+/// - key: The UTXO's unique identifier
+/// - update_proof: The JMT update proof for the insertion
+/// - new_root: The resulting JMT root hash after insertion
+///
+/// This allows verification of UTXO creation without requiring the full UTXO set.
 #[derive(Debug, BorshDeserialize, BorshSerialize)]
 pub struct UTXOInsertionProof {
+    /// The UTXO's key (transaction ID + output index)
     pub key: KeyOutPoint,
+    /// The JMT update proof for this insertion
     pub update_proof: UpdateMerkleProof<Sha256>,
+    /// The new JMT root hash after insertion
     pub new_root: NewRootAfterUTXOInsertion,
     // pub spent_with_proof: BTreeMap<KeyOutPoint, UTXO>,
     // pub spent_from_cache: BTreeMap<KeyOutPoint, UTXO>, // No need, since we can check if a utxo is cached.
     // pub created: Vec<(KeyOutPoint, UTXO)>,
 }
 
-/// The output of the Bitcoin Consensus circuit.
+/// Output data from the Bitcoin consensus verification circuit
+///
+/// This structure represents the result of Bitcoin consensus verification:
+/// - method_id: The verification method used
+/// - bitcoin_state: The resulting state after verification
+///
+/// This output serves as a cryptographic commitment to the blockchain state
+/// after processing the verified blocks.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct BitcoinConsensusCircuitOutput {
+    /// The verification method used
     pub method_id: [u32; 8],
+    /// The resulting Bitcoin state after verification
     pub bitcoin_state: BitcoinState,
 }
+
+/// Bitcoin blockchain state representation
+///
+/// This structure encapsulates the essential state of the Bitcoin blockchain:
+/// - header_chain_state: The state of the block header chain
+/// - utxo_set_commitment: The state of the UTXO set
+///
+/// Together, these components form a complete representation of the blockchain
+/// state needed for consensus verification.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct BitcoinState {
+    /// The state of the block header chain
     pub header_chain_state: header_chain::HeaderChainState,
+    /// The state of the UTXO set (Unspent Transaction Outputs)
     pub utxo_set_commitment: utxo_set::UTXOSetGuest,
 }
 
 impl BitcoinState {
+    /// Creates a new, empty Bitcoin blockchain state
+    ///
+    /// This method initializes a fresh Bitcoin state with:
+    /// - A new header chain state (starting before the genesis block)
+    /// - A new UTXO set commitment (empty UTXO set)
+    ///
+    /// This is typically used when starting verification from the genesis block.
+    ///
+    /// # Returns
+    ///
+    /// A new BitcoinState instance with default values
     pub fn new() -> Self {
         println!("[DEBUG] Creating new BitcoinState");
         BitcoinState {
@@ -508,13 +637,29 @@ impl BitcoinState {
     }
 }
 
+/// Main entry point for the Bitcoin consensus verification circuit
+///
+/// This function implements the core Bitcoin consensus verification circuit that:
+/// 1. Reads the input data (blocks and proofs)
+/// 2. Validates the previous proof (if applicable)
+/// 3. Verifies all blocks against Bitcoin's consensus rules
+/// 4. Commits the final state as a cryptographic proof
+///
+/// The circuit produces a zero-knowledge proof that the blocks follow
+/// Bitcoin's consensus rules without revealing the full blockchain data.
+///
+/// # Arguments
+///
+/// * `guest` - Interface to the ZKVM guest environment
 pub fn bitcoin_consensus_circuit(guest: &impl ZkvmGuest) {
+    // Record the starting cycle count for performance measurement
     let start = risc0_zkvm::guest::env::cycle_count();
     println!(
         "[DEBUG] Starting bitcoin_consensus_circuit at cycle {}",
         start
     );
 
+    // Read the input data from the host
     println!("[DEBUG] Reading input from host");
     let input: BitcoinConsensusCircuitInput = guest.read_from_host();
     println!(
@@ -531,11 +676,14 @@ pub fn bitcoin_consensus_circuit(guest: &impl ZkvmGuest) {
         input.utxo_insertion_proofs.len()
     );
 
+    // Initialize the Bitcoin state based on the previous proof
     let mut bitcoin_state = match input.prev_proof {
+        // For genesis block verification, create a fresh state
         BitcoinConsensusPrevProofType::GenesisBlock => {
             println!("[DEBUG] Creating new BitcoinState from GenesisBlock");
             BitcoinState::new()
         }
+        // For incremental verification, verify the previous proof and use its state
         BitcoinConsensusPrevProofType::PrevProof(prev_proof) => {
             println!("[DEBUG] Using previous BitcoinState from PrevProof");
             println!(
@@ -546,14 +694,18 @@ pub fn bitcoin_consensus_circuit(guest: &impl ZkvmGuest) {
                 "[DEBUG] Previous JMT root: {:?}",
                 prev_proof.bitcoin_state.utxo_set_commitment.jmt_root
             );
+            // Ensure the method ID matches
             assert_eq!(prev_proof.method_id, input.method_id);
             println!("[DEBUG] Method IDs match, verifying previous proof");
+            // Cryptographically verify the previous proof
             guest.verify(input.method_id, &prev_proof);
             println!("[DEBUG] Previous proof verified");
+            // Use the state from the previous proof
             prev_proof.bitcoin_state
         }
     };
 
+    // Verify all blocks and apply them to the state
     println!("[DEBUG] Verifying and applying blocks");
     bitcoin_state.verify_and_apply_blocks(
         input.blocks,
@@ -562,6 +714,7 @@ pub fn bitcoin_consensus_circuit(guest: &impl ZkvmGuest) {
     );
     println!("[DEBUG] All blocks verified and applied");
 
+    // Commit the final state as the circuit output
     println!("[DEBUG] Committing BitcoinConsensusCircuitOutput");
     println!(
         "[DEBUG] Final block height: {}",
@@ -577,6 +730,7 @@ pub fn bitcoin_consensus_circuit(guest: &impl ZkvmGuest) {
     });
     println!("[DEBUG] Output committed");
 
+    // Record and display performance metrics
     let end = risc0_zkvm::guest::env::cycle_count();
     println!(
         "[DEBUG] Bitcoin consensus circuit completed in {} cycles",

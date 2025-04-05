@@ -489,6 +489,7 @@ impl BitcoinState {
             );
 
             let value_utxo;
+            // How do we get this from the tree?
             if let Some(utxo_proof_with_utxo) = optional_utxo_proof_with_utxo {
                 println!("[INFO] Input has JMT proof - Verifying UTXO existence");
                 let keyhash_outpoint = KeyHash::with::<sha2::Sha256>(

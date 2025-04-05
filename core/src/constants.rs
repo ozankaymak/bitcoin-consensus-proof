@@ -19,11 +19,7 @@ pub const SEGWIT_MARKER: u8 = 0x00;
 /// input count follows.
 pub const SEGWIT_FLAG: u8 = 0x01;
 
-/// Magic bytes used for the TapTweak key prefixing in Taproot
-///
-/// In BIP-341 (Taproot), these bytes are used as a prefix when calculating
-/// the TapTweak value to tweak the internal public key with the Merkle root.
-/// They provide domain separation for this specific operation.
+/// TODO: Add a description for this constant
 pub const MAGIC_BYTES: [u8; 4] = [0xaa, 0x21, 0xa9, 0xed];
 
 /// Maximum allowed signature operation cost per block

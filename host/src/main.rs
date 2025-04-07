@@ -22,18 +22,18 @@ use tracing_subscriber::FmtSubscriber;
 const BITCOIN_GUEST_ELF: &[u8] = {
     match option_env!("BITCOIN_NETWORK") {
         Some(network) if matches!(network.as_bytes(), b"mainnet") => {
-            include_bytes!("../../elfs/mainnet-bitcoin-guest")
+            include_bytes!("../../elfs/mainnet-bitcoin-guest.bin")
         }
         Some(network) if matches!(network.as_bytes(), b"testnet4") => {
-            include_bytes!("../../elfs/testnet4-bitcoin-guest")
+            include_bytes!("../../elfs/testnet4-bitcoin-guest.bin")
         }
         Some(network) if matches!(network.as_bytes(), b"signet") => {
-            include_bytes!("../../elfs/signet-bitcoin-guest")
+            include_bytes!("../../elfs/signet-bitcoin-guest.bin")
         }
         Some(network) if matches!(network.as_bytes(), b"regtest") => {
-            include_bytes!("../../elfs/regtest-bitcoin-guest")
+            include_bytes!("../../elfs/regtest-bitcoin-guest.bin")
         }
-        None => include_bytes!("../../elfs/mainnet-bitcoin-guest"),
+        None => include_bytes!("../../elfs/mainnet-bitcoin-guest.bin"),
         _ => panic!("Invalid path or ELF file"),
     }
 };

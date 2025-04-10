@@ -1,23 +1,22 @@
 use std::{env, fs, path::Path};
 
 use anyhow::Result;
-use bitcoin::{hashes::Hash, Block};
+use bitcoin::hashes::Hash;
 use bitcoin_consensus_core::{
     block::CircuitBlock,
-    utxo_set::{KeyOutPoint, UTXO},
-    BitcoinConsensusCircuitInput, BitcoinConsensusCircuitOutput, BitcoinConsensusPrevProofType,
-    TransactionUTXOProofs, UTXOInsertionProof,
+    utxo_set::{KeyOutPoint, OutPointBytes, UTXO},
+    BitcoinConsensusCircuitData, BitcoinConsensusCircuitInput, BitcoinConsensusCircuitOutput,
+    BitcoinConsensusPrevProofType, UTXODeletionUpdateProof, UTXOInsertionUpdateProof,
 };
 use borsh::BorshDeserialize;
-use host::jmt_host::rocks_db::RocksDbStorage;
+use host::parse_block_from_file;
 use host::{
-    generate_utxo_inclusion_proof, generate_utxo_insertion_proofs, parse_block_from_file,
-    update_utxo_set,
+    delete_utxo_and_generate_update_proof, insert_utxo_and_generate_update_proof,
+    jmt_host::rocks_db::RocksDbStorage,
 };
-use jmt::{proof::SparseMerkleProof, RootHash};
+use jmt::RootHash;
 use risc0_zkvm::{compute_image_id, default_prover, ExecutorEnv, ProverOpts, Receipt};
-use tracing::{debug, error, info, warn, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing::{error, info};
 
 const BITCOIN_GUEST_ELF: &[u8] = {
     match option_env!("BITCOIN_NETWORK") {
@@ -108,9 +107,10 @@ fn main() -> Result<(), anyhow::Error> {
     };
 
     let mut blocks = Vec::new();
-    let mut block_utxo_inclusion_proofs = Vec::new();
-    let mut utxos_for_insertion_proofs = Vec::new();
+    // let mut block_utxo_inclusion_proofs = Vec::new();
+    // let mut utxos_for_insertion_proofs = Vec::new();
     let storage = RocksDbStorage::new(&db_path)?;
+    // JMT root hash for the UTXO set on the host side
     let mut current_root = storage
         .get_latest_root()?
         .unwrap_or_else(|| RootHash::from([0; 32]));
@@ -142,11 +142,9 @@ fn main() -> Result<(), anyhow::Error> {
     };
 
     // Track UTXOs created in this batch (our cache)
-    let mut batch_created_utxos: std::collections::HashMap<KeyOutPoint, UTXO> =
-        std::collections::HashMap::new();
-    // Track which UTXOs from our cache get spent
-    let mut batch_spent_utxos: std::collections::HashSet<KeyOutPoint> =
-        std::collections::HashSet::new();
+    let mut batch_created_utxos: std::collections::BTreeMap<KeyOutPoint, UTXO> =
+        std::collections::BTreeMap::new();
+    let mut tx_proofs: Vec<UTXODeletionUpdateProof> = Vec::new();
 
     // Process blocks and track UTXO changes
     for i in start..start + batch_size {
@@ -162,22 +160,20 @@ fn main() -> Result<(), anyhow::Error> {
         let circuit_block = CircuitBlock::from(block.clone());
         blocks.push(circuit_block.clone());
 
-        let mut block_proofs = Vec::new();
-
+        // let mut block_proofs = Vec::new();
         // Process transactions
         for (tx_index, tx) in block.txdata.iter().enumerate() {
             info!(
                 "  Processing transaction {}/{}: {}",
-                tx_index + 1,
+                tx_index,
                 block.txdata.len(),
                 tx.compute_txid()
             );
 
-            let mut tx_proofs = Vec::new();
             for (input_index, input) in tx.input.iter().enumerate() {
                 if input.previous_output.txid.to_byte_array() == [0; 32] {
                     info!("    Skipping coinbase input {}", input_index);
-                    tx_proofs.push(None);
+                    // tx_proofs.push(None);
                     continue;
                 }
 
@@ -192,17 +188,31 @@ fn main() -> Result<(), anyhow::Error> {
                         "    UTXO {:?}:{} was created and spent within this batch",
                         utxo_key.txid, utxo_key.vout
                     );
-                    batch_spent_utxos.insert(utxo_key);
-                    tx_proofs.push(None);
+                    batch_created_utxos.remove(&utxo_key);
+                    // tx_proofs.push(None);
                 } else {
                     // Generate inclusion proof for pre-existing UTXO
                     info!(
-                        "    Generating inclusion proof for UTXO: {:?}:{}",
+                        "    Deleting UTXO from the tree and generating deletion update proof for UTXO: {:?}:{}",
                         utxo_key.txid, utxo_key.vout
                     );
-                    match generate_utxo_inclusion_proof(&db_path, &utxo_key) {
-                        Ok((utxo, proof)) => tx_proofs.push(Some((proof, utxo, current_root))),
-                        Err(_) => tx_proofs.push(None),
+                    match delete_utxo_and_generate_update_proof(&db_path, &utxo_key, &current_root)
+                    {
+                        Ok((utxo, proof, next_root)) => {
+                            let utxo_deletion_update_proof = UTXODeletionUpdateProof {
+                                update_proof: proof,
+                                utxo,
+                                new_root: next_root,
+                            };
+                            current_root = next_root;
+                            tx_proofs.push(utxo_deletion_update_proof)
+                        }
+                        Err(_) => {
+                            error!(
+                                "Failed to generate deletion proof for UTXO: {:?}:{}",
+                                utxo_key.txid, utxo_key.vout
+                            );
+                        }
                     }
                 }
             }
@@ -242,80 +252,47 @@ fn main() -> Result<(), anyhow::Error> {
                 batch_created_utxos.insert(utxo_key, utxo.clone());
 
                 // Track for insertion proof
-                utxos_for_insertion_proofs.push((utxo_key, utxo));
+                // utxos_for_insertion_proofs.push((utxo_key, utxo));
             }
 
-            block_proofs.push(TransactionUTXOProofs {
-                update_proof: tx_proofs,
-                new_root: current_root,
-            });
+            // block_proofs.push(TransactionUTXOProofs {
+            //     update_proof: tx_proofs,
+            //     new_root: current_root,
+            // });
         }
 
-        block_utxo_inclusion_proofs.push(block_proofs);
+        // block_utxo_inclusion_proofs.push(block_proofs);
     }
 
     // Update UTXO set after processing all blocks
-    let updates: Vec<(KeyOutPoint, Option<UTXO>)> = batch_created_utxos
-        .iter()
-        .filter(|(k, _)| !batch_spent_utxos.contains(k))
-        .map(|(k, v)| (*k, Some(v.clone())))
-        .collect();
-
-    let (new_root, _) = update_utxo_set(&db_path, updates)?;
-    current_root = new_root;
-    info!("  Updated UTXO set - New root: {:?}", current_root);
-
-    // Generate insertion proofs for surviving UTXOs
-    info!("Generating insertion proofs for surviving UTXOs");
-    let utxo_insertion_proofs = {
-        let surviving_utxos: Vec<(KeyOutPoint, UTXO)> = utxos_for_insertion_proofs
-            .iter()
-            .filter(|(key, _)| !batch_spent_utxos.contains(key))
-            .map(|(key, utxo)| (*key, utxo.clone()))
-            .collect();
-
-        if surviving_utxos.is_empty() {
-            info!("  No insertion proofs needed - all UTXOs were spent");
-            Vec::new()
-        } else {
-            info!(
-                "  Generating insertion proofs for {} UTXOs",
-                surviving_utxos.len()
-            );
-            generate_utxo_insertion_proofs(&db_path, &surviving_utxos)?
-        }
-    };
-
-    info!("Proof generation completed:");
-    info!(
-        "  Inclusion proofs for {} blocks",
-        block_utxo_inclusion_proofs.len()
-    );
-    info!("  Insertion proofs: {}", utxo_insertion_proofs.len());
-
-    info!("Preparing circuit input:");
-    info!("  Number of blocks: {}", blocks.len());
-    info!(
-        "  Number of UTXO updates: {}",
-        utxos_for_insertion_proofs.len()
-    );
-    info!(
-        "  Number of UTXO inclusion proofs: {}",
-        block_utxo_inclusion_proofs.len()
-    );
-    info!(
-        "  Number of UTXO insertion proofs: {}",
-        utxo_insertion_proofs.len()
-    );
-    info!("  Previous proof type: {:?}", prev_proof);
+    // let mut updates: Vec<(KeyHash, Option<Vec<u8>>)> = Vec::new();
+    let mut batch_insertion_update_proofs: Vec<UTXOInsertionUpdateProof> = Vec::new();
+    for (key, utxo) in batch_created_utxos.iter() {
+        let (insertion_update_proof, next_root) =
+            insert_utxo_and_generate_update_proof(&db_path, key, utxo, &current_root)?;
+        // let outpoint_bytes = OutPointBytes::from(*key);
+        // let key_hash = KeyHash::with::<sha2::Sha256>(&outpoint_bytes);
+        // let utxo_bytes = UTXOBytes::from(utxo.clone());
+        let utxo_insertion_update_proof = UTXOInsertionUpdateProof {
+            update_proof: insertion_update_proof,
+            new_root: next_root,
+        };
+        // updates.push((key_hash, Some(utxo_bytes.0)));
+        batch_insertion_update_proofs.push(utxo_insertion_update_proof);
+        current_root = next_root;
+    }
 
     // Prepare the input for the circuit
+    let input_data = BitcoinConsensusCircuitData {
+        blocks,
+        utxo_deletion_update_proofs: tx_proofs,
+        utxo_insertion_update_proofs: batch_insertion_update_proofs,
+    };
+
     let input = BitcoinConsensusCircuitInput {
         method_id: bitcoin_guest_id,
         prev_proof,
-        blocks,
-        utxo_inclusion_proofs: block_utxo_inclusion_proofs,
-        utxo_insertion_proofs,
+        input_data,
     };
 
     // Build ENV

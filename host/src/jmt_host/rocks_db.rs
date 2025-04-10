@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::BorshDeserialize;
 use rocksdb::{ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
 use std::path::Path;
 
@@ -10,10 +10,7 @@ use jmt::{
     KeyHash, OwnedValue, RootHash, Sha256Jmt, Version,
 };
 
-use bitcoin_consensus_core::{
-    utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXO},
-    TransactionUTXOProofs, UTXOInsertionProof,
-};
+use bitcoin_consensus_core::utxo_set::{KeyOutPoint, OutPointBytes};
 
 /// RocksDB storage implementation for the Jellyfish Merkle Tree
 pub struct RocksDbStorage {
@@ -206,40 +203,40 @@ impl RocksDbStorage {
     //     Ok(proofs)
     // }
 
-    /// Generates UTXO insertion proofs for a list of UTXO keys
-    pub fn generate_utxo_insertion_proofs(
-        &self,
-        utxo_keys: &[KeyOutPoint],
-        version: Version,
-    ) -> Result<Vec<UTXOInsertionProof>> {
-        println!("[DEBUG] Generating UTXO insertion proofs");
-        let mut proofs = Vec::new();
+    // /// Generates UTXO insertion proofs for a list of UTXO keys
+    // pub fn generate_utxo_insertion_proofs(
+    //     &self,
+    //     utxo_keys: &[KeyOutPoint],
+    //     version: Version,
+    // ) -> Result<Vec<UTXOInsertionProof>> {
+    //     println!("[DEBUG] Generating UTXO insertion proofs");
+    //     let mut proofs = Vec::new();
 
-        for utxo_key in utxo_keys {
-            let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*utxo_key).as_ref());
-            let (value_opt, _) = self.get_jmt().get_with_proof(key_hash, version)?;
+    //     for utxo_key in utxo_keys {
+    //         let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*utxo_key).as_ref());
+    //         let (value_opt, _) = self.get_jmt().get_with_proof(key_hash, version)?;
 
-            if let Some(value) = value_opt {
-                // Convert SparseMerkleProof to UpdateMerkleProof
-                // This requires an additional call to get the update proof
-                let (new_root, update_proof, _) = self
-                    .get_jmt()
-                    .put_value_set_with_proof([(key_hash, Some(value.clone()))], version)?;
+    //         if let Some(value) = value_opt {
+    //             // Convert SparseMerkleProof to UpdateMerkleProof
+    //             // This requires an additional call to get the update proof
+    //             let (new_root, update_proof, _) = self
+    //                 .get_jmt()
+    //                 .put_value_set_with_proof([(key_hash, Some(value.clone()))], version)?;
 
-                let insertion_proof = UTXOInsertionProof {
-                    key: *utxo_key,
-                    update_proof,
-                    new_root,
-                };
-                proofs.push(insertion_proof);
-            } else {
-                return Err(anyhow!("UTXO not found for key: {:?}", utxo_key));
-            }
-        }
+    //             let insertion_proof = UTXOInsertionProof {
+    //                 key: *utxo_key,
+    //                 update_proof,
+    //                 new_root,
+    //             };
+    //             proofs.push(insertion_proof);
+    //         } else {
+    //             return Err(anyhow!("UTXO not found for key: {:?}", utxo_key));
+    //         }
+    //     }
 
-        println!("[DEBUG] Generated UTXO insertion proofs: {:?}", proofs);
-        Ok(proofs)
-    }
+    //     println!("[DEBUG] Generated UTXO insertion proofs: {:?}", proofs);
+    //     Ok(proofs)
+    // }
 }
 
 impl TreeReader for RocksDbStorage {
@@ -471,6 +468,7 @@ impl TreeWriter for RocksDbStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitcoin_consensus_core::utxo_set::{UTXOBytes, UTXO};
     use jmt::proof::UpdateMerkleProof;
     use jmt::ValueHash;
     use tempfile::tempdir;

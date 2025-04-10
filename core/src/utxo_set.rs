@@ -54,9 +54,6 @@ pub struct UTXOSetGuest {
     /// The Jellyfish Merkle Tree root hash representing the current UTXO state
     pub jmt_root: RootHash,
 
-    /// Version number tracking UTXO set updates (increments with each state change)
-    pub version: Version,
-
     /// Cache for UTXOs created and spent during block processing
     /// Using BTreeMap for deterministic iteration order, critical for reproducible circuit execution
     #[serde(skip)]
@@ -101,6 +98,7 @@ pub struct KeyOutPoint {
 /// used for storage and cryptographic operations. The format is:
 /// - First 32 bytes: Transaction ID
 /// - Last 4 bytes: Output index (big-endian encoded)
+#[derive(Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct OutPointBytes(pub [u8; 36]);
 
 /// Converts a KeyOutPoint to its byte representation
@@ -220,6 +218,7 @@ impl UTXO {
 /// of a UTXO, allowing it to be easily passed to functions that work with
 /// byte arrays while maintaining the semantic connection to UTXOs. It also
 /// provides convenient conversion methods to and from UTXO objects.
+#[derive(Eq, PartialEq, Clone, Debug, BorshDeserialize, BorshSerialize)]
 pub struct UTXOBytes(pub Vec<u8>);
 
 /// Converts a UTXO to its byte representation
@@ -244,49 +243,6 @@ impl AsRef<[u8]> for UTXOBytes {
         &self.0
     }
 }
-
-/// Cryptographic proof of a UTXO's inclusion and subsequent deletion
-///
-/// This structure provides a proof that a particular UTXO existed in the
-/// UTXO set at one point and was later removed (spent). This is crucial for
-/// validating transactions in a zero-knowledge context without access to the
-/// full UTXO set history.
-///
-/// The proof uses a Sparse Merkle Tree proof to cryptographically demonstrate that:
-/// 1. The UTXO existed in the tree at a specific version
-/// 2. The UTXO was removed in a subsequent version
-///
-/// This allows verifiers to confirm that inputs were valid UTXOs that were
-/// properly spent, without requiring the full UTXO set data.
-#[derive(Debug, Clone, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
-pub struct UTXOInclusionWithDeletionProof {
-    /// The cryptographic proof of inclusion and deletion
-    pub proof: SparseMerkleProof<Sha256>,
-}
-
-/// Custom equality implementation for UTXOInclusionWithDeletionProof
-///
-/// Since the SparseMerkleProof type from the JMT library doesn't implement Eq,
-/// we need to provide a custom implementation. This simplified version allows
-/// the proofs to be used in contexts requiring equality comparison.
-///
-/// Note: This is a simplified implementation that always returns true. In a production
-/// environment, a proper comparison of the proof contents would be necessary.
-impl PartialEq for UTXOInclusionWithDeletionProof {
-    fn eq(&self, _other: &Self) -> bool {
-        // For now, we'll just return true for equality checks
-        // In a real implementation, we would need to compare the proofs properly
-        true
-    }
-}
-
-/// Implements Eq for UTXOInclusionWithDeletionProof
-///
-/// This marker implementation states that if two UTXOInclusionWithDeletionProof
-/// objects are equal according to PartialEq, they are also equivalent according to Eq.
-///
-/// Required for using this type in collections like HashMap and BTreeMap.
-impl Eq for UTXOInclusionWithDeletionProof {}
 
 impl KeyOutPoint {
     /// Creates a KeyOutPoint from a bitcoin-rs OutPoint
@@ -475,9 +431,7 @@ impl UTXOSetGuest {
         println!("[DEBUG] Creating new UTXOSetGuest");
         let result = UTXOSetGuest {
             jmt_root: RootHash::from([0u8; 32]), // Empty Merkle tree root
-            version: 0,                          // Initial version
             utxo_cache: BTreeMap::new(),         // Empty cache
-                                                 // spent_utxos: BTreeMap::new(),      // Commented out but may be used in future
         };
         println!("[DEBUG] New UTXOSetGuest: {:?}", result);
         result
@@ -498,13 +452,11 @@ impl UTXOSetGuest {
     /// # Returns
     ///
     /// A new UTXOSetGuest instance initialized with the provided state
-    pub fn with_root(jmt_root: RootHash, version: Version) -> Self {
+    pub fn with_root(jmt_root: RootHash) -> Self {
         println!("[DEBUG] Creating UTXOSetGuest with root and version");
         let result = UTXOSetGuest {
-            jmt_root, // The provided root hash
-            version,  // The provided version
+            jmt_root,                    // The provided root hash
             utxo_cache: BTreeMap::new(), // Empty cache
-                      // spent_utxos: BTreeMap::new(), // Commented out but may be used in future
         };
         println!("[DEBUG] UTXOSetGuest with Root: {:?}", result);
         result
@@ -523,75 +475,6 @@ impl UTXOSetGuest {
         println!("[DEBUG] Getting JMT root");
         let result = self.jmt_root;
         println!("[DEBUG] JMT Root: {:?}", result);
-        result
-    }
-
-    /// Returns the current version of the UTXO set
-    ///
-    /// The version number increases monotonically with each state change to
-    /// the UTXO set. This allows tracking of state transitions and associating
-    /// proofs with specific versions of the UTXO set.
-    ///
-    /// # Returns
-    ///
-    /// The current version number
-    pub fn get_version(&self) -> Version {
-        println!("[DEBUG] Getting version");
-        let result = self.version;
-        println!("[DEBUG] Version: {:?}", result);
-        result
-    }
-
-    /// Updates the JMT root hash and version
-    ///
-    /// This method is called when the UTXO set state changes, typically after
-    /// processing a block. It updates both the root hash (representing the new
-    /// state of the Merkle tree) and the version number (incremented to reflect
-    /// the state change).
-    ///
-    /// # Arguments
-    ///
-    /// * `new_root` - The new Jellyfish Merkle Tree root hash
-    /// * `new_version` - The new version number
-    pub fn update_root(&mut self, new_root: RootHash, new_version: Version) {
-        println!("[DEBUG] Updating JMT root and version");
-        self.jmt_root = new_root;
-        self.version = new_version;
-        println!(
-            "[DEBUG] Updated JMT Root: {:?}, Version: {:?}",
-            self.jmt_root, self.version
-        );
-    }
-
-    /// Verifies that a UTXO exists in the set
-    ///
-    /// This method checks whether a specific UTXO exists in the UTXO set.
-    /// It first checks the in-memory cache, and if not found, would typically
-    /// verify a cryptographic proof against the JMT root hash.
-    ///
-    /// Note: This implementation currently only checks the cache and returns
-    /// false for UTXOs not in the cache. In a complete implementation, this
-    /// would verify a proof provided by the host.
-    ///
-    /// # Arguments
-    ///
-    /// * `utxo_key` - The key (txid + vout) of the UTXO to verify
-    ///
-    /// # Returns
-    ///
-    /// `true` if the UTXO exists, `false` otherwise
-    pub fn verify_utxo_exists(&self, utxo_key: &KeyOutPoint) -> bool {
-        println!("[DEBUG] Verifying UTXO existence");
-        // Check cache first for efficiency
-        if self.has_cached_utxo(utxo_key) {
-            return true;
-        }
-
-        // In a full implementation, this would verify a cryptographic proof
-        // against the JMT root to check if the UTXO exists in the tree
-        // This is a stub implementation for now
-        let result = false;
-        println!("[DEBUG] UTXO Exists: {}", result);
         result
     }
 
@@ -827,27 +710,5 @@ impl UTXOSetGuest {
     pub fn clear_cache(&mut self) {
         println!("[DEBUG] Clearing UTXO cache");
         self.utxo_cache.clear();
-    }
-
-    /// Method that categorizes the cached UTXOs for efficient block processing
-    ///
-    /// This method does three important things:
-    /// 1. Identifies UTXOs that were created and spent within the same block (no JMT update needed)
-    /// 2. Identifies UTXOs that need to be added to the JMT (created but not spent)
-    /// 3. Identifies UTXOs that need to be removed from the JMT (spent from previous blocks)
-    ///
-    /// Returns a tuple of (to_add, to_remove) where each is a set of UTXO keys
-    pub fn categorize_cached_changes(&self) -> (Vec<&KeyOutPoint>, Vec<&KeyOutPoint>) {
-        println!("[DEBUG] Categorizing cached changes");
-        let mut to_add = Vec::new();
-        let mut to_remove = Vec::new();
-
-        // In a real implementation, this would analyze the cache and identify
-        // which UTXOs need to be added to the JMT and which need to be removed
-
-        // For now, we return empty vectors as this is just a stub
-        let result = (to_add, to_remove);
-        println!("[DEBUG] Categorized Cached Changes: {:?}", result);
-        result
     }
 }

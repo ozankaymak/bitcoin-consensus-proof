@@ -443,8 +443,6 @@ impl TreeWriter for RocksDbStorage {
             }
         }
 
-        println!("AAAAAAAAAAAAAAAA");
-
         // Update rightmost leaf if we found one
         if let Some((ref node_key, ref leaf_node)) = rightmost_leaf {
             println!("Updating rightmost leaf");

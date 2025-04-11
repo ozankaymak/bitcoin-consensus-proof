@@ -114,7 +114,7 @@ fn main() -> Result<(), anyhow::Error> {
     let mut current_root = storage
         .get_latest_root()?
         .unwrap_or_else(|| RootHash::from([0; 32]));
-
+    info!("Current JMT root at the beginning: {:?}", current_root);
     let mut start = 0;
     let prev_proof = match prev_receipt.clone() {
         Some(receipt) => {
@@ -196,7 +196,7 @@ fn main() -> Result<(), anyhow::Error> {
                         "    Deleting UTXO from the tree and generating deletion update proof for UTXO: {:?}:{}",
                         utxo_key.txid, utxo_key.vout
                     );
-                    match delete_utxo_and_generate_update_proof(&db_path, &utxo_key, &current_root)
+                    match delete_utxo_and_generate_update_proof(&storage, &utxo_key, &current_root)
                     {
                         Ok((utxo, proof, next_root)) => {
                             let utxo_deletion_update_proof = UTXODeletionUpdateProof {
@@ -267,9 +267,14 @@ fn main() -> Result<(), anyhow::Error> {
     // Update UTXO set after processing all blocks
     // let mut updates: Vec<(KeyHash, Option<Vec<u8>>)> = Vec::new();
     let mut batch_insertion_update_proofs: Vec<UTXOInsertionUpdateProof> = Vec::new();
+    info!(
+        "Batch created UTXOs length: {:?}",
+        batch_created_utxos.len()
+    );
+    info!("Batch created UTXOs: {:?}", batch_created_utxos);
     for (key, utxo) in batch_created_utxos.iter() {
         let (insertion_update_proof, next_root) =
-            insert_utxo_and_generate_update_proof(&db_path, key, utxo, &current_root)?;
+            insert_utxo_and_generate_update_proof(&storage, key, utxo, &current_root)?;
         // let outpoint_bytes = OutPointBytes::from(*key);
         // let key_hash = KeyHash::with::<sha2::Sha256>(&outpoint_bytes);
         // let utxo_bytes = UTXOBytes::from(utxo.clone());
@@ -288,6 +293,18 @@ fn main() -> Result<(), anyhow::Error> {
         utxo_deletion_update_proofs: tx_proofs,
         utxo_insertion_update_proofs: batch_insertion_update_proofs,
     };
+
+    info!("Input data prepared for circuit execution");
+    info!("  Number of blocks: {}", input_data.blocks.len());
+    info!(
+        "  Number of UTXO deletion proofs: {}",
+        input_data.utxo_deletion_update_proofs.len()
+    );
+    info!(
+        "  Number of UTXO insertion proofs: {}",
+        input_data.utxo_insertion_update_proofs.len()
+    );
+    info!("  Current JMT root: {:?}", current_root);
 
     let input = BitcoinConsensusCircuitInput {
         method_id: bitcoin_guest_id,

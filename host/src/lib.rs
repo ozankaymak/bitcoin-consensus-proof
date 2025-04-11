@@ -33,7 +33,7 @@ pub fn parse_block_from_file(file_path: &str) -> Result<Block, anyhow::Error> {
 
 // Generate JMT proof of inclusion for a UTXO
 pub fn delete_utxo_and_generate_update_proof(
-    db_path: impl AsRef<Path>,
+    storage: &RocksDbStorage,
     utxo_key: &KeyOutPoint,
     prev_root_hash: &RootHash,
 ) -> Result<(UTXO, UpdateMerkleProof<Sha256>, RootHash)> {
@@ -41,10 +41,10 @@ pub fn delete_utxo_and_generate_update_proof(
         "Generating UTXO deletion update proof for key: {:?}",
         utxo_key
     );
-    info!("  Database path: {}", db_path.as_ref().display());
+    // info!("  Database path: {}", db_path.as_ref().display());
 
     // Create RocksDB storage
-    let storage = RocksDbStorage::new(db_path)?;
+    // let storage = RocksDbStorage::new(db_path)?;
     let jmt = storage.get_jmt();
 
     // Get the latest version of the tree
@@ -112,7 +112,7 @@ pub fn delete_utxo_and_generate_update_proof(
 }
 
 pub fn insert_utxo_and_generate_update_proof(
-    db_path: impl AsRef<Path>,
+    storage: &RocksDbStorage,
     utxo_key: &KeyOutPoint,
     utxo: &UTXO,
     prev_root_hash: &RootHash,
@@ -121,10 +121,10 @@ pub fn insert_utxo_and_generate_update_proof(
         "Generating UTXO insertion update proof for key: {:?}",
         utxo_key
     );
-    info!("  Database path: {}", db_path.as_ref().display());
+    // info!("  Database path: {}", db_path.as_ref().display());
 
     // Create RocksDB storage
-    let storage = RocksDbStorage::new(db_path)?;
+    // let storage = RocksDbStorage::new(db_path)?;
     let jmt = storage.get_jmt();
 
     // Get the latest version of the tree
@@ -173,7 +173,6 @@ pub fn insert_utxo_and_generate_update_proof(
         jmt.get_with_proof(key_hash, latest_version + 1)?;
     assert_eq!(value_after_delete.unwrap(), utxo_bytes.0);
 
-    // We should use verify_nonexistence instead of verify_existence for a deleted UTXO
     assert!(inclusion_proof_after_insert
         .verify_existence(root_after_insert, key_hash, utxo_bytes.0)
         .is_ok());

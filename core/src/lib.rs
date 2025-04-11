@@ -252,6 +252,8 @@ impl BitcoinState {
                 block.block_header.bits,
                 block.block_header.nonce
             );
+            self.header_chain_state
+                .verify_and_apply_header(&block.block_header);
 
             // Process transactions
             let mut sigops = 0u32;
@@ -326,6 +328,26 @@ impl BitcoinState {
             self.utxo_set_commitment.utxo_cache.len()
         );
 
+        println!(
+            "[INFO] Processing {} UTXO insertion proofs",
+            num_insertion_proofs
+        );
+
+        println!(
+            "[INFO] Verifying UTXO insertion proofs - Current JMT root: {:?}",
+            curr_root_hash
+        );
+
+        println!(
+            "[INFO] UTXO cache size before processing proofs: {}",
+            self.utxo_set_commitment.utxo_cache.len()
+        );
+
+        println!(
+            "[INFO] UTXO cache: {:?}",
+            self.utxo_set_commitment.utxo_cache
+        );
+
         for (proof_idx, (key_outpoint, value_utxo)) in
             self.utxo_set_commitment.utxo_cache.iter().enumerate()
         {
@@ -338,10 +360,19 @@ impl BitcoinState {
             );
 
             println!("[INFO] Verifying update proof");
-            input
-                .utxo_insertion_update_proofs
-                .swap_remove(proof_idx)
-                .verify_update(&mut curr_root_hash, *key_outpoint, value_utxo.clone());
+            let curr_proof = input.utxo_insertion_update_proofs.swap_remove(proof_idx);
+
+            println!(
+                "[INFO] Verifying update proof - Key: {:?}, Value: {:?}",
+                key_outpoint, value_utxo
+            );
+            println!(
+                "[INFO] Verifying update proof - Current root: {:?}",
+                curr_root_hash
+            );
+            println!("[INFO] Proof: {:?}", curr_proof);
+
+            curr_proof.verify_update(&mut curr_root_hash, *key_outpoint, value_utxo.clone());
 
             println!(
                 "[INFO] JMT updated - New root: {:?}, Cache size: {}",
@@ -417,9 +448,9 @@ impl BitcoinState {
             "[INFO] Processing {} transaction inputs with UTXO proofs",
             transaction.input.len()
         );
-
+        let is_coinbase = transaction.is_coinbase();
         // Coinbase transaction checks
-        if transaction.is_coinbase() {
+        if is_coinbase {
             // No need for input existence check
             println!(
                 "[INFO] Coinbase transaction - Script length: {}",
@@ -491,7 +522,7 @@ impl BitcoinState {
             transaction,
             self.header_chain_state.block_height,
             self.header_chain_state.block_time,
-            false,
+            is_coinbase,
         );
         println!(
             "[INFO] UTXO cache updated - New size: {}",

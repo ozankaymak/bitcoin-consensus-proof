@@ -27,7 +27,7 @@ BITCOIN_NETWORK=NETWORK_TYPE cargo build --release -p host
 ```
 where `NETWORK_TYPE` matches to the one of the previous command. Finally, run:
 ```bash
-./target/release/host None data/proofs/testnet4_first_9.bin 10
+./target/release/host None data/proofs/testnet4/testnet4_first_9.bin 10
 ```
 where
 - The first argument is the previous proof file path (`None` if starting from genesis).

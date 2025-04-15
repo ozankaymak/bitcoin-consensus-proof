@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 /// # Bitcoin Consensus Proof Core Library
 ///
 /// This library implements Bitcoin's consensus rules in a manner compatible with
@@ -37,7 +39,7 @@ use params::NETWORK_PARAMS;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use transaction::CircuitTransaction;
-use utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXO};
+use utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXOSetGuest, UTXO};
 use zkvm::ZkvmGuest;
 
 /// Bitcoin Merkle tree implementation (transaction hashing, block commitments)
@@ -103,7 +105,7 @@ pub struct BitcoinConsensusCircuitData {
     /// Proofs for transaction input UTXOs. We already have the Key OutPoint in the input.
     pub utxo_deletion_update_proofs: Vec<UTXODeletionUpdateProof>,
     /// Proofs for transaction output UTXOs.
-    pub utxo_insertion_update_proofs: Vec<UTXOInsertionUpdateProof>, // TODO: Maybe these two proofs can be combined into a Witness.
+    pub utxo_insertion_update_proofs: UTXOInsertionUpdateProof, // TODO: Maybe these two proofs can be combined into a Witness.
 }
 
 #[derive(Debug, BorshDeserialize, BorshSerialize)]
@@ -146,12 +148,32 @@ pub struct UTXOInsertionUpdateProof {
 }
 
 impl UTXOInsertionUpdateProof {
-    pub fn verify_update(self, prev_root: &mut RootHash, key: KeyOutPoint, value: UTXO) {
-        let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(key).as_ref());
-        let utxo_bytes = UTXOBytes::from(value.clone());
-        let updates = vec![(key_hash, Some(utxo_bytes.0))];
+    pub fn empty() -> Self {
+        UTXOInsertionUpdateProof {
+            update_proof: UpdateMerkleProof::new(vec![]),
+            new_root: RootHash([0u8; 32]),
+        }
+    }
+
+    pub fn verify_update(self, prev_root: &mut RootHash, updates: &Vec<(KeyOutPoint, UTXO)>) {
+        // let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(key).as_ref());
+        // let utxo_bytes = UTXOBytes::from(value.clone());
+        // let updates = vec![(key_hash, Some(utxo_bytes.0))];
+        println!("[DEBUG] Verifying UTXO insertion update proof");
+        println!("[DEBUG] Previous root: {:?}", prev_root);
+        println!("[DEBUG] New root: {:?}", self.new_root);
+        println!("[DEBUG] Updates: {:?}", updates);
+        println!("[DEBUG] Update proof: {:?}", self.update_proof);
+        let proof_updates = updates
+            .iter()
+            .map(|(key, value)| {
+                let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*key).as_ref());
+                let utxo_bytes = UTXOBytes::from(value.clone());
+                (key_hash, Some(utxo_bytes.0))
+            })
+            .collect::<Vec<_>>();
         self.update_proof
-            .verify_update(*prev_root, self.new_root, &updates)
+            .verify_update(*prev_root, self.new_root, &proof_updates)
             .unwrap();
         *prev_root = self.new_root;
     }
@@ -210,6 +232,7 @@ impl BitcoinState {
     }
 
     pub fn verify_and_apply_blocks(&mut self, input: &mut BitcoinConsensusCircuitData) {
+        let mut utxo_cache: BTreeMap<KeyOutPoint, UTXO> = BTreeMap::new();
         let mut utxo_deletion_update_proof_index = 0;
         let num_blocks = input.blocks.len();
         let num_deletion_proofs = input.utxo_deletion_update_proofs.len();
@@ -217,11 +240,11 @@ impl BitcoinState {
             "[INFO] Processing {} UTXO deletion proofs",
             num_deletion_proofs
         );
-        let num_insertion_proofs = input.utxo_insertion_update_proofs.len();
-        println!(
-            "[INFO] Processing {} UTXO insertion proofs",
-            num_insertion_proofs
-        );
+        // let num_insertion_proofs = input.utxo_insertion_update_proofs.len();
+        // println!(
+        //     "[INFO] Processing {} UTXO insertion proofs",
+        //     num_insertion_proofs
+        // );
 
         println!(
             "[INFO] Starting block verification and application. Processing {} blocks",
@@ -231,7 +254,7 @@ impl BitcoinState {
             "[INFO] Initial state - Block height: {}, JMT root: {:?}, UTXO cache size: {}",
             self.header_chain_state.block_height,
             self.utxo_set_commitment.jmt_root,
-            self.utxo_set_commitment.utxo_cache.len()
+            utxo_cache.len()
         );
 
         for (block_idx, block) in input.blocks.iter().enumerate() {
@@ -273,6 +296,7 @@ impl BitcoinState {
                     transaction.output.len()
                 );
                 self.verify_and_apply_transaction(
+                    &mut utxo_cache,
                     &mut sigops,
                     &transaction,
                     &mut input.utxo_deletion_update_proofs,
@@ -280,7 +304,7 @@ impl BitcoinState {
                 );
                 println!(
                     "[INFO] Transaction processed - Current UTXO cache size: {}",
-                    self.utxo_set_commitment.utxo_cache.len()
+                    utxo_cache.len()
                 );
             }
 
@@ -316,82 +340,100 @@ impl BitcoinState {
             }
         }
 
-        println!(
-            "[INFO] All blocks processed. Processing {} UTXO insertion proofs",
-            num_insertion_proofs
-        );
+        // println!(
+        //     "[INFO] All blocks processed. Processing {} UTXO insertion proofs",
+        //     num_insertion_proofs
+        // );
 
-        let mut curr_root_hash = self.utxo_set_commitment.jmt_root;
         println!(
             "[INFO] Current JMT state - Root: {:?}, Cache size: {}",
-            curr_root_hash,
-            self.utxo_set_commitment.utxo_cache.len()
+            self.utxo_set_commitment.jmt_root,
+            utxo_cache.len()
         );
 
-        println!(
-            "[INFO] Processing {} UTXO insertion proofs",
-            num_insertion_proofs
-        );
+        // println!(
+        //     "[INFO] Processing {} UTXO insertion proofs",
+        //     num_insertion_proofs
+        // );
 
         println!(
             "[INFO] Verifying UTXO insertion proofs - Current JMT root: {:?}",
-            curr_root_hash
+            self.utxo_set_commitment.jmt_root
         );
 
         println!(
             "[INFO] UTXO cache size before processing proofs: {}",
-            self.utxo_set_commitment.utxo_cache.len()
+            utxo_cache.len()
         );
+
+        println!("[INFO] UTXO cache: {:?}", utxo_cache);
+
+        // for (proof_idx, (key_outpoint, value_utxo)) in
+        //     self.utxo_set_commitment.utxo_cache.iter().enumerate()
+        // {
+        //     println!(
+        //         "[INFO] Processing UTXO insertion proof {}/{} - Key: {:?}, Value: {:?}",
+        //         proof_idx + 1,
+        //         num_insertion_proofs,
+        //         key_outpoint,
+        //         value_utxo
+        //     );
+
+        //     println!("[INFO] Verifying update proof");
+        //     let curr_proof = input.utxo_insertion_update_proofs.swap_remove(proof_idx);
+
+        //     println!(
+        //         "[INFO] Verifying update proof - Key: {:?}, Value: {:?}",
+        //         key_outpoint, value_utxo
+        //     );
+        //     println!(
+        //         "[INFO] Verifying update proof - Current root: {:?}",
+        //         curr_root_hash
+        //     );
+        //     println!("[INFO] Proof: {:?}", curr_proof);
+
+        //     curr_proof.verify_update(&mut curr_root_hash, *key_outpoint, value_utxo.clone());
+
+        //     println!(
+        //         "[INFO] JMT updated - New root: {:?}, Cache size: {}",
+        //         curr_root_hash,
+        //         self.utxo_set_commitment.utxo_cache.len()
+        //     );
+        // }
+
+        // Vectorize the UTXO cache
+        let updates = utxo_cache
+            .into_iter()
+            .map(|(key_outpoint, value_utxo)| {
+                // let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*key_outpoint).as_ref());
+                // let utxo_bytes = UTXOBytes::from(value_utxo.clone());
+                (key_outpoint, value_utxo)
+            })
+            .collect::<Vec<_>>();
+
+        let proof = std::mem::replace(
+            &mut input.utxo_insertion_update_proofs,
+            UTXOInsertionUpdateProof::empty(),
+        );
+        proof.verify_update(&mut self.utxo_set_commitment.jmt_root, &updates);
 
         println!(
-            "[INFO] UTXO cache: {:?}",
-            self.utxo_set_commitment.utxo_cache
+            "[INFO] JMT updated - New root: {:?}",
+            self.utxo_set_commitment.jmt_root,
         );
 
-        for (proof_idx, (key_outpoint, value_utxo)) in
-            self.utxo_set_commitment.utxo_cache.iter().enumerate()
-        {
-            println!(
-                "[INFO] Processing UTXO insertion proof {}/{} - Key: {:?}, Value: {:?}",
-                proof_idx + 1,
-                num_insertion_proofs,
-                key_outpoint,
-                value_utxo
-            );
-
-            println!("[INFO] Verifying update proof");
-            let curr_proof = input.utxo_insertion_update_proofs.swap_remove(proof_idx);
-
-            println!(
-                "[INFO] Verifying update proof - Key: {:?}, Value: {:?}",
-                key_outpoint, value_utxo
-            );
-            println!(
-                "[INFO] Verifying update proof - Current root: {:?}",
-                curr_root_hash
-            );
-            println!("[INFO] Proof: {:?}", curr_proof);
-
-            curr_proof.verify_update(&mut curr_root_hash, *key_outpoint, value_utxo.clone());
-
-            println!(
-                "[INFO] JMT updated - New root: {:?}, Cache size: {}",
-                curr_root_hash,
-                self.utxo_set_commitment.utxo_cache.len()
-            );
-        }
-
-        println!(
-            "[INFO] Verifying cache is empty. Current size: {}",
-            self.utxo_set_commitment.utxo_cache.len()
-        );
-        assert!(self.utxo_set_commitment.utxo_cache.is_empty());
+        // println!(
+        //     "[INFO] Verifying cache is empty. Current size: {}",
+        //     utxo_cache.len()
+        // );
+        // assert!(utxo_cache.is_empty());
         println!("[INFO] All UTXO operations completed successfully");
     }
 
     /// For now, handle UTXO set changes transaction by transaction. Maybe batch them later.
     pub fn verify_and_apply_transaction(
         &mut self,
+        utxo_cache: &mut BTreeMap<KeyOutPoint, UTXO>,
         total_sigops: &mut u32,
         transaction: &CircuitTransaction,
         deletion_update_proof_vec: &mut Vec<UTXODeletionUpdateProof>,
@@ -480,7 +522,7 @@ impl BitcoinState {
                 );
                 let key_outpoint = KeyOutPoint::from_outpoint(&tx_input.previous_output);
 
-                if let Some(utxo) = self.utxo_set_commitment.pop_utxo_from_cache(&key_outpoint) {
+                if let Some(utxo) = utxo_cache.remove(&key_outpoint) {
                     println!("[INFO] UTXO Cache has the UTXO - No need for the JMT proof");
                     println!(
                         "[INFO] Found UTXO in cache - Value: {} satoshis, Height: {}, Coinbase: {}",
@@ -509,6 +551,8 @@ impl BitcoinState {
             }
         }
 
+        self.utxo_set_commitment.jmt_root = curr_root_hash;
+
         // Verify transaction inputs
         for (_input_idx, _input) in transaction.input.iter().enumerate() {
             // TODO: Verify transaction inputs
@@ -516,18 +560,16 @@ impl BitcoinState {
 
         println!(
             "[INFO] Adding transaction outputs to UTXO cache - Current size: {}",
-            self.utxo_set_commitment.utxo_cache.len()
+            utxo_cache.len()
         );
-        self.utxo_set_commitment.add_transaction_outputs(
+        UTXOSetGuest::add_transaction_outputs(
             transaction,
             self.header_chain_state.block_height,
             self.header_chain_state.block_time,
             is_coinbase,
+            utxo_cache,
         );
-        println!(
-            "[INFO] UTXO cache updated - New size: {}",
-            self.utxo_set_commitment.utxo_cache.len()
-        );
+        println!("[INFO] UTXO cache updated - New size: {}", utxo_cache.len());
         println!("[INFO] Transaction verification and application completed");
     }
 
@@ -611,10 +653,10 @@ pub fn bitcoin_consensus_circuit(guest: &impl ZkvmGuest) {
         "[DEBUG] Number of UTXO inclusion proofs: {}",
         input.input_data.utxo_deletion_update_proofs.len()
     );
-    println!(
-        "[DEBUG] Number of UTXO insertion proofs: {}",
-        input.input_data.utxo_insertion_update_proofs.len()
-    );
+    // println!(
+    //     "[DEBUG] Number of UTXO insertion proofs: {}",
+    //     input.input_data.utxo_insertion_update_proofs.len()
+    // );
 
     // Initialize the Bitcoin state based on the previous proof
     let mut bitcoin_state = match input.prev_proof {

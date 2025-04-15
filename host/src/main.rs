@@ -1,22 +1,22 @@
-use std::{env, fs, path::Path};
+use std::{env, fs, path::Path, thread, time::Duration};
 
 use anyhow::Result;
 use bitcoin::hashes::Hash;
 use bitcoin_consensus_core::{
     block::CircuitBlock,
-    utxo_set::{KeyOutPoint, OutPointBytes, UTXO},
+    utxo_set::{KeyOutPoint, UTXO},
     BitcoinConsensusCircuitData, BitcoinConsensusCircuitInput, BitcoinConsensusCircuitOutput,
     BitcoinConsensusPrevProofType, UTXODeletionUpdateProof, UTXOInsertionUpdateProof,
 };
 use borsh::BorshDeserialize;
-use host::parse_block_from_file;
 use host::{
-    delete_utxo_and_generate_update_proof, insert_utxo_and_generate_update_proof,
-    jmt_host::rocks_db::RocksDbStorage,
+    delete_utxo_and_generate_update_proof, insert_utxos_and_generate_update_proofs,
+    jmt_host::rocks_db::RocksDbStorage, parse_block_from_file,
 };
 use jmt::RootHash;
 use risc0_zkvm::{compute_image_id, default_prover, ExecutorEnv, ProverOpts, Receipt};
-use tracing::{error, info};
+use tracing::{error, info, Level};
+use tracing_subscriber::EnvFilter;
 
 const BITCOIN_GUEST_ELF: &[u8] = {
     match option_env!("BITCOIN_NETWORK") {
@@ -47,29 +47,39 @@ const NETWORK: &str = {
 const DB_PATH: &str = "data/utxo_db";
 
 fn main() -> Result<(), anyhow::Error> {
-    // Initialize tracing with info level
+    // Initialize tracing with DEBUG level as default if RUST_LOG is not set
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new(Level::DEBUG.to_string())),
         )
         .init();
+
     info!("Starting Bitcoin consensus proof generation");
 
     // Parse command-line arguments
     let args: Vec<String> = env::args().collect();
-    if args.len() < 4 {
-        eprintln!("Usage: <program> <input_proof> <output_file_path> <batch_size>");
+    if args.len() < 5 {
+        eprintln!("Usage: <program> <input_proof> <output_file_prefix> <batch_size> <num_batches>");
+        eprintln!("  input_proof: Path to previous proof file or 'None' to start from genesis");
+        eprintln!("  output_file_prefix: Prefix for proof output files");
+        eprintln!("  batch_size: Number of blocks to process in each batch");
+        eprintln!("  num_batches: Number of batches to process sequentially");
         return Ok(());
     }
 
     let input_proof = &args[1];
-    let output_file_path = &args[2];
+    let output_file_prefix = &args[2];
     let batch_size: usize = args[3].parse().expect("Batch size should be a number");
-    info!("Starting proof generation with parameters:");
-    info!("  Input proof: {}", input_proof);
-    info!("  Output file: {}", output_file_path);
+    let num_batches: usize = args[4]
+        .parse()
+        .expect("Number of batches should be a number");
+
+    info!("Starting multi-batch proof generation with parameters:");
+    info!("  Initial input proof: {}", input_proof);
+    info!("  Output file prefix: {}", output_file_prefix);
     info!("  Batch size: {}", batch_size);
+    info!("  Number of batches: {}", num_batches);
     info!("  Network: {}", NETWORK);
 
     // Set up the database path
@@ -86,6 +96,95 @@ fn main() -> Result<(), anyhow::Error> {
         .unwrap();
     info!("Computed guest program ID: {:?}", bitcoin_guest_id);
 
+    // Initialize previous proof path
+    let mut current_proof_path = String::from(input_proof);
+
+    // Main batch loop
+    for batch_num in 1..=num_batches {
+        info!("==================================================");
+        info!("Processing batch {}/{}", batch_num, num_batches);
+        info!("==================================================");
+
+        // Generate output file path for this batch
+        let current_start_block = if current_proof_path.to_lowercase() == "none" {
+            0
+        } else {
+            // Try to extract previous block height to calculate current start
+            if let Ok(prev_proof_bytes) = fs::read(&current_proof_path) {
+                if let Ok(receipt) = Receipt::try_from_slice(&prev_proof_bytes) {
+                    if let Ok(prev_output) =
+                        BitcoinConsensusCircuitOutput::try_from_slice(&receipt.journal.bytes)
+                    {
+                        prev_output.bitcoin_state.header_chain_state.block_height + 1
+                    } else {
+                        // Fallback if we can't parse the output
+                        (batch_num as u32 - 1) * batch_size as u32
+                    }
+                } else {
+                    // Fallback if we can't parse the receipt
+                    (batch_num as u32 - 1) * batch_size as u32
+                }
+            } else {
+                // Fallback if we can't read the file
+                (batch_num as u32 - 1) * batch_size as u32
+            }
+        };
+
+        let end_block = current_start_block + batch_size as u32 - 1;
+        let output_file_path = format!(
+            "{}_{}_to_{}.bin",
+            output_file_prefix, current_start_block, end_block
+        );
+
+        info!("Batch {} details:", batch_num);
+        info!("  Input proof: {}", current_proof_path);
+        info!("  Output file: {}", output_file_path);
+        info!(
+            "  Processing blocks: {} to {}",
+            current_start_block, end_block
+        );
+
+        // Process this batch
+        let result = process_batch(
+            &current_proof_path,
+            &output_file_path,
+            batch_size,
+            bitcoin_guest_id,
+        )?;
+
+        // Update for next iteration
+        current_proof_path = output_file_path;
+
+        info!("Batch {} completed successfully", batch_num);
+        info!("  Final block height: {}", result.block_height);
+        info!("  Final JMT root: {:?}", result.jmt_root);
+
+        // Sleep for 2 seconds before starting the next batch
+        if batch_num < num_batches {
+            info!("Sleeping for 2 seconds before starting next batch...");
+            thread::sleep(Duration::from_secs(2));
+        }
+    }
+
+    info!("All batches completed successfully!");
+    info!("Final proof file: {}", current_proof_path);
+
+    Ok(())
+}
+
+// Result structure for returning process_batch information
+struct BatchResult {
+    block_height: u32,
+    jmt_root: RootHash,
+}
+
+// Extracted batch processing logic
+fn process_batch(
+    input_proof: &str,
+    output_file_path: &str,
+    batch_size: usize,
+    bitcoin_guest_id: [u32; 8],
+) -> Result<BatchResult, anyhow::Error> {
     // Set the previous proof type based on input_proof argument
     let prev_receipt = if input_proof.to_lowercase() == "none" {
         info!("Starting from genesis block");
@@ -107,13 +206,17 @@ fn main() -> Result<(), anyhow::Error> {
     };
 
     let mut blocks = Vec::new();
-    // let mut block_utxo_inclusion_proofs = Vec::new();
-    // let mut utxos_for_insertion_proofs = Vec::new();
-    let storage = RocksDbStorage::new(&db_path)?;
+    let storage = RocksDbStorage::new(DB_PATH)?;
+    // Inspect database
+    storage.inspect_all()?;
+
     // JMT root hash for the UTXO set on the host side
-    let mut current_root = storage
-        .get_latest_root()?
-        .unwrap_or_else(|| RootHash::from([0; 32]));
+    let mut current_root = storage.get_latest_root()?.unwrap_or_else(|| {
+        RootHash::from([
+            83, 80, 65, 82, 83, 69, 95, 77, 69, 82, 75, 76, 69, 95, 80, 76, 65, 67, 69, 72, 79, 76,
+            68, 69, 82, 95, 72, 65, 83, 72, 95, 95,
+        ])
+    });
     info!("Current JMT root at the beginning: {:?}", current_root);
     let mut start = 0;
     let prev_proof = match prev_receipt.clone() {
@@ -160,7 +263,6 @@ fn main() -> Result<(), anyhow::Error> {
         let circuit_block = CircuitBlock::from(block.clone());
         blocks.push(circuit_block.clone());
 
-        // let mut block_proofs = Vec::new();
         // Process transactions
         for (tx_index, tx) in block.txdata.iter().enumerate() {
             info!(
@@ -196,8 +298,11 @@ fn main() -> Result<(), anyhow::Error> {
                         "    Deleting UTXO from the tree and generating deletion update proof for UTXO: {:?}:{}",
                         utxo_key.txid, utxo_key.vout
                     );
-                    match delete_utxo_and_generate_update_proof(&storage, &utxo_key, &current_root)
-                    {
+                    match delete_utxo_and_generate_update_proof(
+                        &storage,
+                        &utxo_key,
+                        &mut current_root,
+                    ) {
                         Ok((utxo, proof, next_root)) => {
                             let utxo_deletion_update_proof = UTXODeletionUpdateProof {
                                 update_proof: proof,
@@ -250,48 +355,34 @@ fn main() -> Result<(), anyhow::Error> {
 
                 // Add to our batch cache
                 batch_created_utxos.insert(utxo_key, utxo.clone());
-
-                // Track for insertion proof
-                // utxos_for_insertion_proofs.push((utxo_key, utxo));
             }
-
-            // block_proofs.push(TransactionUTXOProofs {
-            //     update_proof: tx_proofs,
-            //     new_root: current_root,
-            // });
         }
-
-        // block_utxo_inclusion_proofs.push(block_proofs);
     }
 
     // Update UTXO set after processing all blocks
-    // let mut updates: Vec<(KeyHash, Option<Vec<u8>>)> = Vec::new();
-    let mut batch_insertion_update_proofs: Vec<UTXOInsertionUpdateProof> = Vec::new();
     info!(
         "Batch created UTXOs length: {:?}",
         batch_created_utxos.len()
     );
     info!("Batch created UTXOs: {:?}", batch_created_utxos);
-    for (key, utxo) in batch_created_utxos.iter() {
-        let (insertion_update_proof, next_root) =
-            insert_utxo_and_generate_update_proof(&storage, key, utxo, &current_root)?;
-        // let outpoint_bytes = OutPointBytes::from(*key);
-        // let key_hash = KeyHash::with::<sha2::Sha256>(&outpoint_bytes);
-        // let utxo_bytes = UTXOBytes::from(utxo.clone());
-        let utxo_insertion_update_proof = UTXOInsertionUpdateProof {
-            update_proof: insertion_update_proof,
-            new_root: next_root,
-        };
-        // updates.push((key_hash, Some(utxo_bytes.0)));
-        batch_insertion_update_proofs.push(utxo_insertion_update_proof);
-        current_root = next_root;
-    }
+
+    let key_value_pairs = batch_created_utxos
+        .iter()
+        .map(|(key, utxo)| (key.clone(), utxo.clone()))
+        .collect::<Vec<(KeyOutPoint, UTXO)>>();
+
+    let insertion_update_proofs: UTXOInsertionUpdateProof =
+        insert_utxos_and_generate_update_proofs(
+            &storage,
+            key_value_pairs.as_ref(),
+            &mut current_root,
+        )?;
 
     // Prepare the input for the circuit
     let input_data = BitcoinConsensusCircuitData {
         blocks,
         utxo_deletion_update_proofs: tx_proofs,
-        utxo_insertion_update_proofs: batch_insertion_update_proofs,
+        utxo_insertion_update_proofs: insertion_update_proofs,
     };
 
     info!("Input data prepared for circuit execution");
@@ -300,10 +391,6 @@ fn main() -> Result<(), anyhow::Error> {
         "  Number of UTXO deletion proofs: {}",
         input_data.utxo_deletion_update_proofs.len()
     );
-    info!(
-        "  Number of UTXO insertion proofs: {}",
-        input_data.utxo_insertion_update_proofs.len()
-    );
     info!("  Current JMT root: {:?}", current_root);
 
     let input = BitcoinConsensusCircuitInput {
@@ -311,6 +398,8 @@ fn main() -> Result<(), anyhow::Error> {
         prev_proof,
         input_data,
     };
+
+    storage.inspect_all()?;
 
     // Build ENV
     info!("Building executor environment");
@@ -406,5 +495,9 @@ fn main() -> Result<(), anyhow::Error> {
     fs::write(output_file_path, &receipt_bytes)?;
     info!("Receipt saved successfully");
 
-    Ok(())
+    // Return the batch result
+    Ok(BatchResult {
+        block_height: output.bitcoin_state.header_chain_state.block_height,
+        jmt_root: output.bitcoin_state.utxo_set_commitment.jmt_root,
+    })
 }

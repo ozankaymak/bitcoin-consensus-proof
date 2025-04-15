@@ -1,8 +1,11 @@
-use std::{fs::File, io::Read, path::Path};
+use std::{fs::File, io::Read};
 
 use anyhow::Result;
 use bitcoin::Block;
-use bitcoin_consensus_core::utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXO};
+use bitcoin_consensus_core::{
+    utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXO},
+    UTXOInsertionUpdateProof,
+};
 use jmt::{proof::UpdateMerkleProof, KeyHash, RootHash, ValueHash};
 use jmt_host::rocks_db::RocksDbStorage;
 use sha2::Sha256;
@@ -35,22 +38,20 @@ pub fn parse_block_from_file(file_path: &str) -> Result<Block, anyhow::Error> {
 pub fn delete_utxo_and_generate_update_proof(
     storage: &RocksDbStorage,
     utxo_key: &KeyOutPoint,
-    prev_root_hash: &RootHash,
+    prev_root_hash: &mut RootHash,
 ) -> Result<(UTXO, UpdateMerkleProof<Sha256>, RootHash)> {
     info!(
         "Generating UTXO deletion update proof for key: {:?}",
         utxo_key
     );
-    // info!("  Database path: {}", db_path.as_ref().display());
 
-    // Create RocksDB storage
-    // let storage = RocksDbStorage::new(db_path)?;
     let jmt = storage.get_jmt();
 
     // Get the latest version of the tree
-    let latest_root = storage
-        .get_latest_root()?
-        .unwrap_or(RootHash::from([0u8; 32]));
+    let latest_root = storage.get_latest_root()?.unwrap_or(RootHash::from([
+        83, 80, 65, 82, 83, 69, 95, 77, 69, 82, 75, 76, 69, 95, 80, 76, 65, 67, 69, 72, 79, 76, 68,
+        69, 82, 95, 72, 65, 83, 72, 95, 95,
+    ]));
     assert_eq!(latest_root, *prev_root_hash);
     let latest_version = storage.get_latest_version()?;
     info!("  JMT State:");
@@ -84,6 +85,7 @@ pub fn delete_utxo_and_generate_update_proof(
         [(key_hash, None)],
         latest_version + 1, // next version
     )?;
+    storage.update_with_batch(root_after_delete, batch, latest_version + 1)?;
 
     let deletion_proof_to_borsh =
         borsh::to_vec(&deletion_proof).expect("Failed to serialize deletion proof");
@@ -96,8 +98,6 @@ pub fn delete_utxo_and_generate_update_proof(
     assert_eq!(key_hash, key_hash_from_borsh);
     assert_eq!(utxo_value_hash, value_hash_from_borsh);
 
-    storage.update_with_batch(root_after_delete, batch)?;
-
     // Verify UTXO is gone
     let (value_after_delete, noninclusion_proof_after_delete) =
         jmt.get_with_proof(key_hash, latest_version + 1)?;
@@ -108,74 +108,136 @@ pub fn delete_utxo_and_generate_update_proof(
         .verify_nonexistence(root_after_delete, key_hash)
         .is_ok());
 
+    *prev_root_hash = root_after_delete;
+
     Ok((utxo, deletion_proof, root_after_delete))
 }
 
-pub fn insert_utxo_and_generate_update_proof(
+pub fn insert_utxos_and_generate_update_proofs(
     storage: &RocksDbStorage,
-    utxo_key: &KeyOutPoint,
-    utxo: &UTXO,
-    prev_root_hash: &RootHash,
-) -> Result<(UpdateMerkleProof<Sha256>, RootHash)> {
-    info!(
-        "Generating UTXO insertion update proof for key: {:?}",
-        utxo_key
-    );
-    // info!("  Database path: {}", db_path.as_ref().display());
-
-    // Create RocksDB storage
-    // let storage = RocksDbStorage::new(db_path)?;
+    key_value_pairs: &[(KeyOutPoint, UTXO)],
+    prev_root_hash: &mut RootHash,
+) -> Result<UTXOInsertionUpdateProof> {
     let jmt = storage.get_jmt();
+    info!("HOST: Called JMT");
+    let latest_version = storage.get_latest_version()?;
+    let key_should_return_some = jmt.get(
+        KeyHash([
+            0x1d, 0xd1, 0x00, 0xb5, 0x71, 0xb2, 0xd7, 0xdc, 0xa6, 0xd9, 0x47, 0xbf, 0x94, 0x75,
+            0x7a, 0xdf, 0x5d, 0x5e, 0xca, 0xe9, 0x29, 0x16, 0xf3, 0x20, 0x05, 0xcb, 0x9c, 0xdf,
+            0xed, 0x28, 0x3d, 0xca,
+        ]),
+        latest_version,
+    )?;
+    info!("returned value: {:?}", key_should_return_some);
+
+    let something = jmt.get_leaf_count(0);
+    info!("leaf count at latest version - 1: {:?}", something);
+    let something = jmt.get_leaf_count(latest_version);
+    info!(
+        "leaf count at latest version {:?}: {:?}",
+        latest_version, something
+    );
+    let something = jmt.get_leaf_count(latest_version + 1);
+    info!("leaf count at latest version + 1: {:?}", something);
+
+    let something = jmt.get_root_hash(0);
+    info!("root hash at version 0 {:?}", something);
+    let something = jmt.get_root_hash(latest_version);
+    info!(
+        "root hash at latest version {:?}: {:?}",
+        latest_version, something
+    );
+    let something = jmt.get_root_hash(latest_version + 1);
+    info!("root hash at latest version + 1: {:?}", something);
 
     // Get the latest version of the tree
-    let latest_root = storage
-        .get_latest_root()?
-        .unwrap_or(RootHash::from([0u8; 32]));
-    assert_eq!(latest_root, *prev_root_hash);
+    let root_before_insert = storage.get_latest_root()?.unwrap_or(RootHash::from([
+        83, 80, 65, 82, 83, 69, 95, 77, 69, 82, 75, 76, 69, 95, 80, 76, 65, 67, 69, 72, 79, 76, 68,
+        69, 82, 95, 72, 65, 83, 72, 95, 95,
+    ]));
+    assert_eq!(root_before_insert, *prev_root_hash);
     let latest_version = storage.get_latest_version()?;
+    info!("  JMT State:");
+    info!("    Latest root: {:?}", root_before_insert);
+    info!("    Latest version: {}", latest_version);
+
+    // Generate key hash from UTXO key using OutPointBytes
+    let updates = key_value_pairs
+        .iter()
+        .map(|(utxo_key, utxo)| {
+            let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*utxo_key).as_ref());
+            let utxo_bytes = UTXOBytes::from(utxo.clone());
+            (key_hash, Some(utxo_bytes.0.clone()))
+        })
+        .collect::<Vec<_>>();
+
+    let (root_after_insert, insertion_proof, batch) = jmt.put_value_set_with_proof(
+        updates.clone(),
+        latest_version + 1, // next version
+    )?;
+    info!("HOST: Values inserted, proof generated");
+    info!("HOST: root after insert: {:?}", root_after_insert);
+    info!("HOST: Updates: {:?}", updates);
+    info!("HOST: insertion_proof: {:?}", insertion_proof);
+    storage.update_with_batch(root_after_insert, batch, latest_version + 1)?;
+
+    let latest_version = storage.get_latest_version()?;
+    let latest_root = storage.get_latest_root()?.unwrap_or(RootHash::from([
+        83, 80, 65, 82, 83, 69, 95, 77, 69, 82, 75, 76, 69, 95, 80, 76, 65, 67, 69, 72, 79, 76, 68,
+        69, 82, 95, 72, 65, 83, 72, 95, 95,
+    ]));
+    assert_eq!(latest_root, root_after_insert);
     info!("  JMT State:");
     info!("    Latest root: {:?}", latest_root);
     info!("    Latest version: {}", latest_version);
 
-    // Generate key hash from UTXO key using OutPointBytes
-    let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*utxo_key).as_ref());
-    info!("  Key details:");
-    info!("    Transaction ID: {:?}", utxo_key.txid);
-    info!("    Output index: {}", utxo_key.vout);
-    info!("    Key hash: {:?}", key_hash);
-    info!("    Key hash bytes: {:?}", key_hash.0);
+    let insertion_proof_to_borsh =
+        borsh::to_vec(&insertion_proof).expect("Failed to serialize insertion proof");
 
-    let utxo_bytes = UTXOBytes::from(utxo.clone());
-    let utxo_value_hash = ValueHash::with::<sha2::Sha256>(&utxo_bytes);
-    info!("  UTXO details:");
-    info!("    Value: {} sats", utxo.value);
-    info!("    Block height: {}", utxo.block_height);
-    info!("    Is coinbase: {}", utxo.is_coinbase);
-    info!("    Block time: {}", utxo.block_time);
+    let insertion_proof_copy: UpdateMerkleProof<Sha256> =
+        borsh::from_slice(&insertion_proof_to_borsh)?;
+
+    info!("HOST: previous root hash: {:?}", prev_root_hash);
+    info!("HOST: root after insert: {:?}", root_after_insert);
+    info!("HOST: Updates: {:?}", updates);
+    info!("HOST: insertion_proof: {:?}", insertion_proof_copy);
+
+    let something = jmt.get_leaf_count(0);
+    info!("leaf count at latest version - 1: {:?}", something);
+    let something = jmt.get_leaf_count(latest_version);
     info!(
-        "    Script pubkey length: {} bytes",
-        utxo.script_pubkey.len()
+        "leaf count at latest version {:?}: {:?}",
+        latest_version, something
     );
-    info!("  UTXO serialization:");
-    info!("    UTXOBytes: {:?}", utxo_bytes);
-    info!("    Value hash: {:?}", utxo_value_hash);
-    info!("    Value hash bytes: {:?}", utxo_value_hash.0);
+    let something = jmt.get_leaf_count(latest_version + 1);
+    info!("leaf count at latest version + 1: {:?}", something);
 
-    let (root_after_insert, insertion_proof, batch) = jmt.put_value_set_with_proof(
-        [(key_hash, Some(utxo_bytes.0.clone()))],
-        latest_version + 1, // next version
-    )?;
+    let something = jmt.get_root_hash(0);
+    info!("root hash at version 0 {:?}", something);
+    let something = jmt.get_root_hash(latest_version);
+    info!(
+        "root hash at latest version {:?}: {:?}",
+        latest_version, something
+    );
+    let something = jmt.get_root_hash(latest_version + 1);
+    info!("root hash at latest version + 1: {:?}", something);
 
-    storage.update_with_batch(root_after_insert, batch)?;
+    // let default_root = RootHash::from([
+    //     83, 80, 65, 82, 83, 69, 95, 77, 69, 82, 75, 76, 69, 95, 80, 76, 65, 67, 69, 72, 79, 76,
+    //     68, 69, 82, 95, 72, 65, 83, 72, 95, 95,
+    // ]);
 
-    // Verify UTXO is inserted
-    let (value_after_delete, inclusion_proof_after_insert) =
-        jmt.get_with_proof(key_hash, latest_version + 1)?;
-    assert_eq!(value_after_delete.unwrap(), utxo_bytes.0);
+    insertion_proof_copy
+        .verify_update(root_before_insert, root_after_insert, updates.clone())
+        .unwrap();
 
-    assert!(inclusion_proof_after_insert
-        .verify_existence(root_after_insert, key_hash, utxo_bytes.0)
-        .is_ok());
+    info!("HOST: insertion_proof verified");
 
-    Ok((insertion_proof, root_after_insert))
+    *prev_root_hash = root_after_insert;
+
+    Ok(UTXOInsertionUpdateProof {
+        update_proof: insertion_proof,
+        new_root: root_after_insert,
+    })
 }

@@ -49,7 +49,7 @@ impl CircuitBlock {
     ///
     /// A new CircuitBlock instance
     pub fn from(block: Block) -> Self {
-        println!("[DEBUG] Creating CircuitBlock from Block");
+        // println!("[DEBUG] Creating CircuitBlock from Block");
 
         // Convert the block header
         let block_header = CircuitBlockHeader::from(block.header);
@@ -67,7 +67,7 @@ impl CircuitBlock {
             transactions,
         };
 
-        println!("[DEBUG] Resulting CircuitBlock: {:?}", result);
+        // println!("[DEBUG] Resulting CircuitBlock: {:?}", result);
         result
     }
 
@@ -80,7 +80,7 @@ impl CircuitBlock {
     ///
     /// A standard bitcoin-rs Block
     pub fn into(self) -> Block {
-        println!("[DEBUG] Converting CircuitBlock into Block");
+        // println!("[DEBUG] Converting CircuitBlock into Block");
 
         // Create a standard bitcoin-rs Block
         let result = Block {
@@ -95,7 +95,7 @@ impl CircuitBlock {
                 .collect(),
         };
 
-        println!("[DEBUG] Resulting Block: {:?}", result);
+        // println!("[DEBUG] Resulting Block: {:?}", result);
         result
     }
 
@@ -108,13 +108,13 @@ impl CircuitBlock {
     ///
     /// `true` if any transaction (except the coinbase) is SegWit, `false` otherwise
     pub fn is_segwit(&self) -> bool {
-        println!("[DEBUG] Checking if block is SegWit");
+        // println!("[DEBUG] Checking if block is SegWit");
 
         // A block is SegWit if any non-coinbase transaction uses SegWit
         // We start from index 1 to skip the coinbase transaction
         let result = self.transactions[1..].iter().any(|tx| tx.is_segwit());
 
-        println!("[DEBUG] Is SegWit: {}", result);
+        // println!("[DEBUG] Is SegWit: {}", result);
         result
     }
 
@@ -128,7 +128,7 @@ impl CircuitBlock {
     ///
     /// A 32-byte array containing the witness Merkle root
     pub fn calculate_wtxid_merkle_root(&self) -> [u8; 32] {
-        println!("[DEBUG] Calculating WTXID Merkle Root");
+        // println!("[DEBUG] Calculating WTXID Merkle Root");
 
         // TODO: Make this optional
         // The wtxid of the coinbase transaction is defined to be all zeros
@@ -140,7 +140,7 @@ impl CircuitBlock {
         // Calculate the Merkle root of these wtxids
         let result = BitcoinMerkleTree::generate_root(wtxids);
 
-        println!("[DEBUG] WTXID Merkle Root: {:?}", result);
+        // println!("[DEBUG] WTXID Merkle Root: {:?}", result);
         result
     }
 
@@ -153,11 +153,11 @@ impl CircuitBlock {
     ///
     /// `true` if the block has no transactions, `false` otherwise
     pub fn is_empty(&self) -> bool {
-        println!("[DEBUG] Checking if block is empty");
+        // println!("[DEBUG] Checking if block is empty");
 
         let result = self.transactions.is_empty();
 
-        println!("[DEBUG] Is Empty: {}", result);
+        // println!("[DEBUG] Is Empty: {}", result);
         result
     }
 
@@ -170,7 +170,7 @@ impl CircuitBlock {
     ///
     /// The base size in bytes
     fn base_size(&self) -> usize {
-        println!("[DEBUG] Calculating base size of block");
+        // println!("[DEBUG] Calculating base size of block");
 
         // Start with the fixed block header size
         let mut size = 80; // Block header size is always 80 bytes
@@ -186,7 +186,7 @@ impl CircuitBlock {
             .sum::<usize>();
 
         let result = size;
-        println!("[DEBUG] Base Size: {}", result);
+        // println!("[DEBUG] Base Size: {}", result);
         result
     }
 
@@ -198,7 +198,7 @@ impl CircuitBlock {
     ///
     /// The total size in bytes
     pub fn total_size(&self) -> usize {
-        println!("[DEBUG] Calculating total size of block");
+        // println!("[DEBUG] Calculating total size of block");
 
         // Start with the fixed block header size
         let mut size = 80; // Block header size
@@ -214,7 +214,7 @@ impl CircuitBlock {
             .sum::<usize>();
 
         let result = size;
-        println!("[DEBUG] Total Size: {}", result);
+        // println!("[DEBUG] Total Size: {}", result);
         result
     }
 
@@ -228,13 +228,13 @@ impl CircuitBlock {
     ///
     /// The block weight in weight units
     pub fn weight(&self) -> u64 {
-        println!("[DEBUG] Calculating weight of block");
+        // println!("[DEBUG] Calculating weight of block");
 
         // Calculate weight according to BIP-141 formula:
         // weight = (base size * 3) + total size
         let result = (self.base_size() * 3 + self.total_size()) as u64;
 
-        println!("[DEBUG] Weight: {}", result);
+        // println!("[DEBUG] Weight: {}", result);
         result
     }
 
@@ -249,7 +249,7 @@ impl CircuitBlock {
     /// `true` if the witness commitment is valid or if the block has no SegWit transactions,
     /// `false` otherwise
     pub fn check_witness_commitment(&self) -> bool {
-        println!("[DEBUG] Checking witness commitment");
+        // println!("[DEBUG] Checking witness commitment");
 
         // Magic bytes prefix that identifies a witness commitment output
         const MAGIC: [u8; 6] = [0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
@@ -299,7 +299,7 @@ impl CircuitBlock {
 
         // If we get here, the commitment is invalid
         let result = false;
-        println!("[DEBUG] Witness Commitment Check: {}", result);
+        // println!("[DEBUG] Witness Commitment Check: {}", result);
         result
     }
 
@@ -314,7 +314,7 @@ impl CircuitBlock {
     ///
     /// `true` if the block size is valid, `false` otherwise
     pub fn is_valid_size(&self) -> bool {
-        println!("[DEBUG] Checking if block size is valid");
+        // println!("[DEBUG] Checking if block size is valid");
 
         // Blocks must contain at least the coinbase transaction
         if self.transactions.is_empty() {
@@ -336,7 +336,7 @@ impl CircuitBlock {
 
         // Block size is valid
         let result = true;
-        println!("[DEBUG] Is Valid Size: {}", result);
+        // println!("[DEBUG] Is Valid Size: {}", result);
         result
     }
 
@@ -351,12 +351,12 @@ impl CircuitBlock {
     /// `Some(&CircuitTransaction)` pointing to the coinbase transaction if the block has any transactions,
     /// or `None` if the block is empty
     pub fn coinbase(&self) -> Option<&CircuitTransaction> {
-        println!("[DEBUG] Retrieving coinbase transaction");
+        // println!("[DEBUG] Retrieving coinbase transaction");
 
         // The coinbase is the first transaction in the block
         let result = self.transactions.first();
 
-        println!("[DEBUG] Coinbase Transaction: {:?}", result);
+        // println!("[DEBUG] Coinbase Transaction: {:?}", result);
         result
     }
 
@@ -379,7 +379,7 @@ impl CircuitBlock {
     /// The block height as a u64 if successfully extracted, or a Bip34Error otherwise
     // TODO: Maybe we don't need this
     pub fn bip34_block_height(&self) -> Result<u64, Bip34Error> {
-        println!("[DEBUG] Retrieving BIP34 block height");
+        // println!("[DEBUG] Retrieving BIP34 block height");
 
         // BIP-34 is only in effect for blocks with version 2 and above
         if self.block_header.version < 2 {
@@ -413,7 +413,7 @@ impl CircuitBlock {
                     Err(Bip34Error::NegativeHeight)
                 } else {
                     let result = Ok(h as u64);
-                    println!("[DEBUG] BIP34 Block Height: {:?}", result);
+                    // println!("[DEBUG] BIP34 Block Height: {:?}", result);
                     result
                 }
             }
@@ -432,7 +432,7 @@ impl CircuitBlock {
     ///
     /// The total value of all coinbase outputs as a Bitcoin Amount
     pub fn get_claimed_block_reward(&self) -> Amount {
-        println!("[DEBUG] Calculating claimed block reward");
+        // println!("[DEBUG] Calculating claimed block reward");
 
         // Get the coinbase transaction (first transaction)
         let coinbase_tx = &self.transactions[0];
@@ -446,7 +446,7 @@ impl CircuitBlock {
         }
 
         let result = reward;
-        println!("[DEBUG] Claimed Block Reward: {}", result);
+        // println!("[DEBUG] Claimed Block Reward: {}", result);
         result
     }
 
@@ -467,7 +467,7 @@ impl CircuitBlock {
     ///
     /// Panics if the coinbase script doesn't conform to the expected format
     pub fn get_bip34_block_height(&self) -> u32 {
-        println!("[DEBUG] Getting BIP34 block height");
+        // println!("[DEBUG] Getting BIP34 block height");
 
         // Get the coinbase transaction
         let coinbase_tx = &self.transactions[0];
@@ -506,7 +506,7 @@ impl CircuitBlock {
         }
 
         let result = height_value;
-        println!("[DEBUG] BIP34 Block Height: {}", result);
+        // println!("[DEBUG] BIP34 Block Height: {}", result);
         result
     }
 
@@ -526,7 +526,7 @@ impl CircuitBlock {
     /// - No witness commitment is found
     /// - The witness commitment format is invalid
     pub fn get_witness_commitment_hash(&self) -> [u8; 32] {
-        println!("[DEBUG] Getting witness commitment hash");
+        // println!("[DEBUG] Getting witness commitment hash");
 
         // Get the coinbase transaction
         let coinbase_tx = &self.transactions[0];
@@ -556,7 +556,7 @@ impl CircuitBlock {
 
                 // Extract the 32-byte commitment hash
                 let result = output.script_pubkey.as_bytes()[6..38].try_into().unwrap();
-                println!("[DEBUG] Witness Commitment Hash: {:?}", result);
+                // println!("[DEBUG] Witness Commitment Hash: {:?}", result);
                 return result;
             }
         }

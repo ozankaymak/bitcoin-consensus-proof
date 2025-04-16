@@ -9,7 +9,7 @@ use bitcoin_consensus_core::{
 use jmt::{proof::UpdateMerkleProof, KeyHash, RootHash, ValueHash};
 use jmt_host::rocks_db::RocksDbStorage;
 use sha2::Sha256;
-use tracing::info;
+use tracing::{info, warn};
 
 pub mod jmt_host;
 
@@ -54,29 +54,29 @@ pub fn delete_utxo_and_generate_update_proof(
     ]));
     assert_eq!(latest_root, *prev_root_hash);
     let latest_version = storage.get_latest_version()?;
-    info!("  JMT State:");
-    info!("    Latest root: {:?}", latest_root);
-    info!("    Latest version: {}", latest_version);
+    warn!("Delete UTXO:  JMT State:");
+    warn!("Delete UTXO:    Latest root: {:?}", latest_root);
+    warn!("Delete UTXO:    Latest version: {}", latest_version);
 
     // Generate key hash from UTXO key using OutPointBytes
     let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(*utxo_key).as_ref());
-    info!("  Key details:");
-    info!("    Transaction ID: {:?}", utxo_key.txid);
-    info!("    Output index: {}", utxo_key.vout);
-    info!("    Key hash: {:?}", key_hash);
-    info!("    Key hash bytes: {:?}", key_hash.0);
+    warn!("  Key details:");
+    warn!("    Transaction ID: {:?}", utxo_key.txid);
+    warn!("    Output index: {}", utxo_key.vout);
+    warn!("    Key hash: {:?}", key_hash);
+    warn!("    Key hash bytes: {:?}", key_hash.0);
 
     // Get the UTXO value
     info!("  Fetching UTXO from JMT...");
     let utxo_bytes = jmt.get(key_hash, latest_version)?.expect("UTXO not found");
     let utxo: UTXO = UTXOBytes(utxo_bytes.clone()).into(); // Remove clone if you can
     let utxo_value_hash = ValueHash::with::<sha2::Sha256>(&utxo_bytes);
-    info!("  UTXO details:");
-    info!("    Value: {} sats", utxo.value);
-    info!("    Block height: {}", utxo.block_height);
-    info!("    Is coinbase: {}", utxo.is_coinbase);
-    info!("    Block time: {}", utxo.block_time);
-    info!(
+    warn!("  UTXO details:");
+    warn!("    Value: {} sats", utxo.value);
+    warn!("    Block height: {}", utxo.block_height);
+    warn!("    Is coinbase: {}", utxo.is_coinbase);
+    warn!("    Block time: {}", utxo.block_time);
+    warn!(
         "    Script pubkey length: {} bytes",
         utxo.script_pubkey.len()
     );
@@ -85,15 +85,26 @@ pub fn delete_utxo_and_generate_update_proof(
         [(key_hash, None)],
         latest_version + 1, // next version
     )?;
+    warn!("Key: {:?}", utxo_key);
+    warn!("Key hash: {:?}", key_hash);
+    warn!("UTXO value hash: {:?}", utxo_value_hash);
+    warn!("UTXO bytes: {:?}", utxo_bytes);
+    warn!("UTXO: {:?}", utxo);
+    warn!("Root after delete: {:?}", root_after_delete);
+    warn!("Deletion proof: {:?}", deletion_proof);
+    warn!("Batch: {:?}", batch);
+
+    warn!("HOST: root after delete: {:?}", root_after_delete);
     storage.update_with_batch(root_after_delete, batch, latest_version + 1)?;
 
     let deletion_proof_to_borsh =
         borsh::to_vec(&deletion_proof).expect("Failed to serialize deletion proof");
+    warn!("Deletion proof to borsh: {:?}", deletion_proof_to_borsh);
 
     let key_hash_from_borsh = borsh::from_slice::<KeyHash>(&deletion_proof_to_borsh[5..37])?;
-    info!("Key hash from borsh: {:?}", key_hash_from_borsh);
+    warn!("Key hash from borsh: {:?}", key_hash_from_borsh);
     let value_hash_from_borsh = borsh::from_slice::<ValueHash>(&deletion_proof_to_borsh[37..69])?;
-    info!("Value hash from borsh: {:?}", value_hash_from_borsh);
+    warn!("Value hash from borsh: {:?}", value_hash_from_borsh);
 
     assert_eq!(key_hash, key_hash_from_borsh);
     assert_eq!(utxo_value_hash, value_hash_from_borsh);
@@ -121,15 +132,15 @@ pub fn insert_utxos_and_generate_update_proofs(
     let jmt = storage.get_jmt();
     info!("HOST: Called JMT");
     let latest_version = storage.get_latest_version()?;
-    let key_should_return_some = jmt.get(
-        KeyHash([
-            0x1d, 0xd1, 0x00, 0xb5, 0x71, 0xb2, 0xd7, 0xdc, 0xa6, 0xd9, 0x47, 0xbf, 0x94, 0x75,
-            0x7a, 0xdf, 0x5d, 0x5e, 0xca, 0xe9, 0x29, 0x16, 0xf3, 0x20, 0x05, 0xcb, 0x9c, 0xdf,
-            0xed, 0x28, 0x3d, 0xca,
-        ]),
-        latest_version,
-    )?;
-    info!("returned value: {:?}", key_should_return_some);
+    // let key_should_return_some = jmt.get(
+    //     KeyHash([
+    //         0x1d, 0xd1, 0x00, 0xb5, 0x71, 0xb2, 0xd7, 0xdc, 0xa6, 0xd9, 0x47, 0xbf, 0x94, 0x75,
+    //         0x7a, 0xdf, 0x5d, 0x5e, 0xca, 0xe9, 0x29, 0x16, 0xf3, 0x20, 0x05, 0xcb, 0x9c, 0xdf,
+    //         0xed, 0x28, 0x3d, 0xca,
+    //     ]),
+    //     latest_version,
+    // )?;
+    // info!("returned value: {:?}", key_should_return_some);
 
     let something = jmt.get_leaf_count(0);
     info!("leaf count at latest version - 1: {:?}", something);
@@ -144,12 +155,12 @@ pub fn insert_utxos_and_generate_update_proofs(
     let something = jmt.get_root_hash(0);
     info!("root hash at version 0 {:?}", something);
     let something = jmt.get_root_hash(latest_version);
-    info!(
+    warn!(
         "root hash at latest version {:?}: {:?}",
         latest_version, something
     );
     let something = jmt.get_root_hash(latest_version + 1);
-    info!("root hash at latest version + 1: {:?}", something);
+    warn!("root hash at latest version + 1: {:?}", something);
 
     // Get the latest version of the tree
     let root_before_insert = storage.get_latest_root()?.unwrap_or(RootHash::from([
@@ -176,10 +187,10 @@ pub fn insert_utxos_and_generate_update_proofs(
         updates.clone(),
         latest_version + 1, // next version
     )?;
-    info!("HOST: Values inserted, proof generated");
-    info!("HOST: root after insert: {:?}", root_after_insert);
-    info!("HOST: Updates: {:?}", updates);
-    info!("HOST: insertion_proof: {:?}", insertion_proof);
+    warn!("HOST: Values inserted, proof generated");
+    warn!("HOST: root after insert: {:?}", root_after_insert);
+    warn!("HOST: Updates: {:?}", updates);
+    warn!("HOST: insertion_proof: {:?}", insertion_proof);
     storage.update_with_batch(root_after_insert, batch, latest_version + 1)?;
 
     let latest_version = storage.get_latest_version()?;

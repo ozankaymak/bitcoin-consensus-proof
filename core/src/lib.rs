@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 /// # Bitcoin Consensus Proof Core Library
 ///
@@ -103,7 +103,7 @@ pub struct BitcoinConsensusCircuitData {
     /// The blocks to verify
     pub blocks: Vec<CircuitBlock>,
     /// Proofs for transaction input UTXOs. We already have the Key OutPoint in the input.
-    pub utxo_deletion_update_proofs: Vec<UTXODeletionUpdateProof>,
+    pub utxo_deletion_update_proofs: VecDeque<UTXODeletionUpdateProof>,
     /// Proofs for transaction output UTXOs.
     pub utxo_insertion_update_proofs: UTXOInsertionUpdateProof, // TODO: Maybe these two proofs can be combined into a Witness.
 }
@@ -124,10 +124,10 @@ impl UTXODeletionUpdateProof {
         let value_hash = ValueHash::with::<sha2::Sha256>(&utxo_bytes);
         let proof_to_borsh = borsh::to_vec(&self.update_proof).unwrap();
         let key_hash_from_borsh = borsh::from_slice::<KeyHash>(&proof_to_borsh[5..37]).unwrap();
-        println!("Key hash from borsh: {:?}", key_hash_from_borsh);
+        // println!("Key hash from borsh: {:?}", key_hash_from_borsh);
         let value_hash_from_borsh =
             borsh::from_slice::<ValueHash>(&proof_to_borsh[37..69]).unwrap();
-        println!("Value hash from borsh: {:?}", value_hash_from_borsh);
+        // println!("Value hash from borsh: {:?}", value_hash_from_borsh);
         let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(key).as_ref());
         assert_eq!(key_hash, key_hash_from_borsh);
         assert_eq!(value_hash, value_hash_from_borsh);
@@ -159,11 +159,11 @@ impl UTXOInsertionUpdateProof {
         // let key_hash = KeyHash::with::<sha2::Sha256>(OutPointBytes::from(key).as_ref());
         // let utxo_bytes = UTXOBytes::from(value.clone());
         // let updates = vec![(key_hash, Some(utxo_bytes.0))];
-        println!("[DEBUG] Verifying UTXO insertion update proof");
-        println!("[DEBUG] Previous root: {:?}", prev_root);
-        println!("[DEBUG] New root: {:?}", self.new_root);
-        println!("[DEBUG] Updates: {:?}", updates);
-        println!("[DEBUG] Update proof: {:?}", self.update_proof);
+        // println!("[DEBUG] Verifying UTXO insertion update proof");
+        // println!("[DEBUG] Previous root: {:?}", prev_root);
+        // println!("[DEBUG] New root: {:?}", self.new_root);
+        // println!("[DEBUG] Updates: {:?}", updates);
+        // println!("[DEBUG] Update proof: {:?}", self.update_proof);
         let proof_updates = updates
             .iter()
             .map(|(key, value)| {
@@ -224,7 +224,7 @@ impl BitcoinState {
     ///
     /// A new BitcoinState instance with default values
     pub fn new() -> Self {
-        println!("[DEBUG] Creating new BitcoinState");
+        // println!("[DEBUG] Creating new BitcoinState");
         BitcoinState {
             header_chain_state: HeaderChainState::new(),
             utxo_set_commitment: utxo_set::UTXOSetGuest::new(),
@@ -236,26 +236,26 @@ impl BitcoinState {
         let mut utxo_deletion_update_proof_index = 0;
         let num_blocks = input.blocks.len();
         let num_deletion_proofs = input.utxo_deletion_update_proofs.len();
-        println!(
-            "[INFO] Processing {} UTXO deletion proofs",
-            num_deletion_proofs
-        );
+        // println!(
+        //     "[INFO] Processing {} UTXO deletion proofs",
+        //     num_deletion_proofs
+        // );
         // let num_insertion_proofs = input.utxo_insertion_update_proofs.len();
         // println!(
         //     "[INFO] Processing {} UTXO insertion proofs",
         //     num_insertion_proofs
         // );
 
-        println!(
-            "[INFO] Starting block verification and application. Processing {} blocks",
-            num_blocks
-        );
-        println!(
-            "[INFO] Initial state - Block height: {}, JMT root: {:?}, UTXO cache size: {}",
-            self.header_chain_state.block_height,
-            self.utxo_set_commitment.jmt_root,
-            utxo_cache.len()
-        );
+        // println!(
+        //     "[INFO] Starting block verification and application. Processing {} blocks",
+        //     num_blocks
+        // );
+        // println!(
+        //     "[INFO] Initial state - Block height: {}, JMT root: {:?}, UTXO cache size: {}",
+        //     self.header_chain_state.block_height,
+        //     self.utxo_set_commitment.jmt_root,
+        //     utxo_cache.len()
+        // );
 
         for (block_idx, block) in input.blocks.iter().enumerate() {
             println!(
@@ -268,51 +268,50 @@ impl BitcoinState {
             );
 
             // Verify block header
-            println!(
-                "[INFO] Verifying block header - Version: {}, Time: {}, Bits: {}, Nonce: {}",
-                block.block_header.version,
-                block.block_header.time,
-                block.block_header.bits,
-                block.block_header.nonce
-            );
+            // println!(
+            //     "[INFO] Verifying block header - Version: {}, Time: {}, Bits: {}, Nonce: {}",
+            //     block.block_header.version,
+            //     block.block_header.time,
+            //     block.block_header.bits,
+            //     block.block_header.nonce
+            // );
             self.header_chain_state
                 .verify_and_apply_header(&block.block_header);
 
             // Process transactions
             let mut sigops = 0u32;
-            println!(
-                "[INFO] Processing {} transactions in block",
-                block.transactions.len()
-            );
+            // println!(
+            //     "[INFO] Processing {} transactions in block",
+            //     block.transactions.len()
+            // );
 
             for (tx_idx, transaction) in block.transactions.iter().enumerate() {
-                println!(
-                    "[INFO] Processing transaction {}/{} - TXID: {:?}, Size: {} bytes, Inputs: {}, Outputs: {}",
-                    tx_idx + 1,
-                    block.transactions.len(),
-                    transaction.txid(),
-                    transaction.total_size(),
-                    transaction.input.len(),
-                    transaction.output.len()
-                );
+                // println!(
+                //     "[INFO] Processing transaction {}/{} - TXID: {:?}, Size: {} bytes, Inputs: {}, Outputs: {}",
+                //     tx_idx + 1,
+                //     block.transactions.len(),
+                //     transaction.txid(),
+                //     transaction.total_size(),
+                //     transaction.input.len(),
+                //     transaction.output.len()
+                // );
                 self.verify_and_apply_transaction(
                     &mut utxo_cache,
                     &mut sigops,
                     &transaction,
                     &mut input.utxo_deletion_update_proofs,
-                    &mut utxo_deletion_update_proof_index,
                 );
-                println!(
-                    "[INFO] Transaction processed - Current UTXO cache size: {}",
-                    utxo_cache.len()
-                );
+                // println!(
+                //     "[INFO] Transaction processed - Current UTXO cache size: {}",
+                //     utxo_cache.len()
+                // );
             }
 
             // Check sigops
-            println!(
-                "[INFO] Block sigops check - Total: {}, Limit: {}",
-                sigops, MAX_BLOCK_SIGOPS_COST
-            );
+            // println!(
+            //     "[INFO] Block sigops check - Total: {}, Limit: {}",
+            //     sigops, MAX_BLOCK_SIGOPS_COST
+            // );
             if sigops * WITNESS_SCALE_FACTOR > MAX_BLOCK_SIGOPS_COST {
                 println!(
                     "[ERROR] Block sigops cost exceeds limits: {} > {}",
@@ -324,10 +323,10 @@ impl BitcoinState {
 
             // BIP-34 check
             if self.header_chain_state.block_height >= NETWORK_PARAMS.bip34_height {
-                println!(
-                    "[INFO] Performing BIP-34 check at height {}",
-                    self.header_chain_state.block_height
-                );
+                // println!(
+                //     "[INFO] Performing BIP-34 check at height {}",
+                //     self.header_chain_state.block_height
+                // );
                 let coinbase_tx = &block.transactions[0];
                 assert!(
                     coinbase_tx.input.is_empty()
@@ -336,7 +335,7 @@ impl BitcoinState {
                                 == [0; 32]),
                     "First transaction must be coinbase"
                 );
-                println!("[INFO] BIP-34 check passed");
+                // println!("[INFO] BIP-34 check passed");
             }
         }
 
@@ -345,28 +344,28 @@ impl BitcoinState {
         //     num_insertion_proofs
         // );
 
-        println!(
-            "[INFO] Current JMT state - Root: {:?}, Cache size: {}",
-            self.utxo_set_commitment.jmt_root,
-            utxo_cache.len()
-        );
+        // println!(
+        //     "[INFO] Current JMT state - Root: {:?}, Cache size: {}",
+        //     self.utxo_set_commitment.jmt_root,
+        //     utxo_cache.len()
+        // );
 
         // println!(
         //     "[INFO] Processing {} UTXO insertion proofs",
         //     num_insertion_proofs
         // );
 
-        println!(
-            "[INFO] Verifying UTXO insertion proofs - Current JMT root: {:?}",
-            self.utxo_set_commitment.jmt_root
-        );
+        // println!(
+        //     "[INFO] Verifying UTXO insertion proofs - Current JMT root: {:?}",
+        //     self.utxo_set_commitment.jmt_root
+        // );
 
-        println!(
-            "[INFO] UTXO cache size before processing proofs: {}",
-            utxo_cache.len()
-        );
+        // println!(
+        //     "[INFO] UTXO cache size before processing proofs: {}",
+        //     utxo_cache.len()
+        // );
 
-        println!("[INFO] UTXO cache: {:?}", utxo_cache);
+        // println!("[INFO] UTXO cache: {:?}", utxo_cache);
 
         // for (proof_idx, (key_outpoint, value_utxo)) in
         //     self.utxo_set_commitment.utxo_cache.iter().enumerate()
@@ -417,17 +416,17 @@ impl BitcoinState {
         );
         proof.verify_update(&mut self.utxo_set_commitment.jmt_root, &updates);
 
-        println!(
-            "[INFO] JMT updated - New root: {:?}",
-            self.utxo_set_commitment.jmt_root,
-        );
+        // println!(
+        //     "[INFO] JMT updated - New root: {:?}",
+        //     self.utxo_set_commitment.jmt_root,
+        // );
 
         // println!(
         //     "[INFO] Verifying cache is empty. Current size: {}",
         //     utxo_cache.len()
         // );
         // assert!(utxo_cache.is_empty());
-        println!("[INFO] All UTXO operations completed successfully");
+        // println!("[INFO] All UTXO operations completed successfully");
     }
 
     /// For now, handle UTXO set changes transaction by transaction. Maybe batch them later.
@@ -436,8 +435,7 @@ impl BitcoinState {
         utxo_cache: &mut BTreeMap<KeyOutPoint, UTXO>,
         total_sigops: &mut u32,
         transaction: &CircuitTransaction,
-        deletion_update_proof_vec: &mut Vec<UTXODeletionUpdateProof>,
-        index: &mut usize,
+        deletion_update_proof_vec: &mut VecDeque<UTXODeletionUpdateProof>,
     ) {
         println!(
             "[INFO] Verifying transaction - TXID: {:?}, Version: {}, Locktime: {}",
@@ -447,108 +445,109 @@ impl BitcoinState {
         );
 
         // Basic transaction checks
-        println!(
-            "[INFO] Transaction structure - Inputs: {}, Outputs: {}, Size: {} bytes",
-            transaction.input.len(),
-            transaction.output.len(),
-            transaction.total_size()
-        );
+        // println!(
+        //     "[INFO] Transaction structure - Inputs: {}, Outputs: {}, Size: {} bytes",
+        //     transaction.input.len(),
+        //     transaction.output.len(),
+        //     transaction.total_size()
+        // );
 
         if transaction.input.is_empty() {
-            println!("[ERROR] Transaction has no inputs");
+            // println!("[ERROR] Transaction has no inputs");
             panic!("Transaction has no inputs");
         }
 
         if transaction.output.is_empty() {
-            println!("[ERROR] Transaction has no outputs");
+            // println!("[ERROR] Transaction has no outputs");
             panic!("Transaction has no outputs");
         }
 
         let tx_size = transaction.total_size();
-        println!(
-            "[INFO] Transaction size check - Size: {} bytes, Limit: 4MB",
-            tx_size * 4
-        );
+        // println!(
+        //     "[INFO] Transaction size check - Size: {} bytes, Limit: 4MB",
+        //     tx_size * 4
+        // );
         if tx_size * 4 > 4_000_000 {
-            println!(
-                "[ERROR] Transaction size exceeds limits: {} > 4MB",
-                tx_size * 4
-            );
+            // println!(
+            //     "[ERROR] Transaction size exceeds limits: {} > 4MB",
+            //     tx_size * 4
+            // );
             panic!("Transaction size exceeds limits");
         }
 
         // UTXO verification
         let mut curr_root_hash = self.utxo_set_commitment.jmt_root;
-        println!(
-            "[INFO] Starting UTXO verification - Current JMT root: {:?}",
-            curr_root_hash
-        );
+        // println!(
+        //     "[INFO] Starting UTXO verification - Current JMT root: {:?}",
+        //     curr_root_hash
+        // );
 
         let mut prevouts: Vec<UTXO> = Vec::new();
 
-        println!(
-            "[INFO] Processing {} transaction inputs with UTXO proofs",
-            transaction.input.len()
-        );
+        // println!(
+        //     "[INFO] Processing {} transaction inputs with UTXO proofs",
+        //     transaction.input.len()
+        // );
         let is_coinbase = transaction.is_coinbase();
         // Coinbase transaction checks
         if is_coinbase {
             // No need for input existence check
-            println!(
-                "[INFO] Coinbase transaction - Script length: {}",
-                transaction.input[0].script_sig.len()
-            );
+            // println!(
+            //     "[INFO] Coinbase transaction - Script length: {}",
+            //     transaction.input[0].script_sig.len()
+            // );
             let script_len = transaction.input[0].script_sig.len();
             if script_len < 2 || script_len > 100 {
-                println!(
-                    "[ERROR] Coinbase script length out of range: {}",
-                    script_len
-                );
+                // println!(
+                //     "[ERROR] Coinbase script length out of range: {}",
+                //     script_len
+                // );
                 panic!("Coinbase script length out of range");
             }
         } else {
-            println!("[INFO] Non-coinbase transaction - Checking previous outputs");
+            // println!("[INFO] Non-coinbase transaction - Checking previous outputs");
             for (idx, tx_input) in transaction.input.iter().enumerate() {
                 if tx_input.previous_output.is_null() {
-                    println!("[ERROR] Null previous output in input {}", idx);
+                    // println!("[ERROR] Null previous output in input {}", idx);
                     panic!("Null previous output");
                 }
 
-                println!(
-                    "[INFO] Processing input {}/{} - Previous output: {:?}",
-                    idx + 1,
-                    transaction.input.len(),
-                    tx_input.previous_output
-                );
+                // println!(
+                //     "[INFO] Processing input {}/{} - Previous output: {:?}",
+                //     idx + 1,
+                //     transaction.input.len(),
+                //     tx_input.previous_output
+                // );
                 let key_outpoint = KeyOutPoint::from_outpoint(&tx_input.previous_output);
 
                 if let Some(utxo) = utxo_cache.remove(&key_outpoint) {
-                    println!("[INFO] UTXO Cache has the UTXO - No need for the JMT proof");
-                    println!(
-                        "[INFO] Found UTXO in cache - Value: {} satoshis, Height: {}, Coinbase: {}",
-                        utxo.value, utxo.block_height, utxo.is_coinbase
-                    );
+                    // println!("[INFO] UTXO Cache has the UTXO - No need for the JMT proof");
+                    // println!(
+                    //     "[INFO] Found UTXO in cache - Value: {} satoshis, Height: {}, Coinbase: {}",
+                    //     utxo.value, utxo.block_height, utxo.is_coinbase
+                    // );
                     prevouts.push(utxo);
                 } else {
-                    println!("[INFO] UTXO not found in cache - Verifying JMT proof");
-                    let proof = deletion_update_proof_vec.swap_remove(*index);
+                    // println!("[INFO] UTXO not found in cache - Verifying JMT proof");
+                    let proof = deletion_update_proof_vec.pop_front().unwrap();
                     // .expect("UTXO proof not found").clone();
-                    *index += 1;
                     prevouts.push(proof.utxo.clone());
                     proof.verify_update(&mut curr_root_hash, key_outpoint);
 
-                    println!("[INFO] JMT updated - New root: {:?}", curr_root_hash);
+                    // println!("[INFO] JMT updated - New root: {:?}", curr_root_hash);
                 }
-                // prevouts.push(value_utxo);
-                *total_sigops += transaction.total_sigop_cost(|outpoint: &OutPoint| {
-                    transaction
-                        .input
-                        .iter()
-                        .position(|input| &input.previous_output == outpoint)
-                        .and_then(|idx| prevouts.get(idx))
-                        .map(|utxo| utxo.into_txout().clone())
-                }) as u32;
             }
+            let tx_sigops_count = transaction.total_sigop_cost(|outpoint: &OutPoint| {
+                transaction
+                    .input
+                    .iter()
+                    .position(|input| &input.previous_output == outpoint)
+                    .and_then(|idx| prevouts.get(idx))
+                    .map(|utxo| utxo.into_txout().clone())
+            }) as u32;
+            println!("Transaction sigops count: {}", tx_sigops_count);
+            *total_sigops += tx_sigops_count;
+            println!("New sigops count: {}", *total_sigops);
         }
 
         self.utxo_set_commitment.jmt_root = curr_root_hash;
@@ -558,10 +557,10 @@ impl BitcoinState {
             // TODO: Verify transaction inputs
         }
 
-        println!(
-            "[INFO] Adding transaction outputs to UTXO cache - Current size: {}",
-            utxo_cache.len()
-        );
+        // println!(
+        //     "[INFO] Adding transaction outputs to UTXO cache - Current size: {}",
+        //     utxo_cache.len()
+        // );
         UTXOSetGuest::add_transaction_outputs(
             transaction,
             self.header_chain_state.block_height,
@@ -569,52 +568,52 @@ impl BitcoinState {
             is_coinbase,
             utxo_cache,
         );
-        println!("[INFO] UTXO cache updated - New size: {}", utxo_cache.len());
-        println!("[INFO] Transaction verification and application completed");
+        // println!("[INFO] UTXO cache updated - New size: {}", utxo_cache.len());
+        // println!("[INFO] Transaction verification and application completed");
     }
 
     pub fn check_coinbase_tx(&self, block: &CircuitBlock) -> bool {
-        println!("[DEBUG] Checking coinbase transaction");
+        // println!("[DEBUG] Checking coinbase transaction");
         let coinbase_tx = &block.transactions[0];
 
-        println!("[DEBUG] Checking basic coinbase structure");
+        // println!("[DEBUG] Checking basic coinbase structure");
         let tx_checks = coinbase_tx.input.len() == 1
             && coinbase_tx.inner().input[0].previous_output.txid
                 == bitcoin::Txid::from_byte_array([0; 32])
             && coinbase_tx.inner().input[0].previous_output.vout == 0xFFFFFFFF;
 
-        println!("[DEBUG] Basic coinbase check result: {}", tx_checks);
+        // println!("[DEBUG] Basic coinbase check result: {}", tx_checks);
 
         // TODO: Make sure BIP34 (height in coinbase) is enforced
         let bip34_height = block.get_bip34_block_height();
         let expected_height = self.header_chain_state.block_height + 1;
-        println!(
-            "[DEBUG] BIP34 check: block height in coinbase = {}, expected = {}",
-            bip34_height, expected_height
-        );
+        // println!(
+        //     "[DEBUG] BIP34 check: block height in coinbase = {}, expected = {}",
+        //     bip34_height, expected_height
+        // );
         let _bip34_check = bip34_height == expected_height;
 
         // TODO: Make sure BIP141 (if there exists a segwit tx in the block, then wtxid commitment is in one of the outputs as OP_RETURN) is enforced
         let is_segwit = coinbase_tx.is_segwit();
-        println!("[DEBUG] Checking BIP141. Coinbase is segwit: {}", is_segwit);
+        // println!("[DEBUG] Checking BIP141. Coinbase is segwit: {}", is_segwit);
 
         let _bip141_check = if is_segwit {
             let has_op_return = coinbase_tx
                 .output
                 .iter()
                 .any(|output| output.script_pubkey.is_op_return());
-            println!(
-                "[DEBUG] BIP141 check: segwit coinbase has OP_RETURN: {}",
-                has_op_return
-            );
+            // println!(
+            //     "[DEBUG] BIP141 check: segwit coinbase has OP_RETURN: {}",
+            //     has_op_return
+            // );
             has_op_return
         } else {
-            println!("[DEBUG] BIP141 check skipped: not a segwit coinbase");
+            // println!("[DEBUG] BIP141 check skipped: not a segwit coinbase");
             true
         };
 
         // TODO: Make sure block reward is correct (block subsidy + fees >= sum of outputs)
-        println!("[DEBUG] Coinbase check completed successfully");
+        // println!("[DEBUG] Coinbase check completed successfully");
         true
     }
 }
@@ -636,23 +635,23 @@ impl BitcoinState {
 pub fn bitcoin_consensus_circuit(guest: &impl ZkvmGuest) {
     // Record the starting cycle count for performance measurement
     let start = risc0_zkvm::guest::env::cycle_count();
-    println!(
-        "[DEBUG] Starting bitcoin_consensus_circuit at cycle {}",
-        start
-    );
+    // println!(
+    //     "[DEBUG] Starting bitcoin_consensus_circuit at cycle {}",
+    //     start
+    // );
 
     // Read the input data from the host
-    println!("[DEBUG] Reading input from host");
+    // println!("[DEBUG] Reading input from host");
     let mut input: BitcoinConsensusCircuitInput = guest.read_from_host();
-    println!(
-        "[DEBUG] Input read: method_id: {:?}, blocks: {}",
-        input.method_id,
-        input.input_data.blocks.len()
-    );
-    println!(
-        "[DEBUG] Number of UTXO inclusion proofs: {}",
-        input.input_data.utxo_deletion_update_proofs.len()
-    );
+    // println!(
+    //     "[DEBUG] Input read: method_id: {:?}, blocks: {}",
+    //     input.method_id,
+    //     input.input_data.blocks.len()
+    // );
+    // println!(
+    //     "[DEBUG] Number of UTXO inclusion proofs: {}",
+    //     input.input_data.utxo_deletion_update_proofs.len()
+    // );
     // println!(
     //     "[DEBUG] Number of UTXO insertion proofs: {}",
     //     input.input_data.utxo_insertion_update_proofs.len()
@@ -662,38 +661,38 @@ pub fn bitcoin_consensus_circuit(guest: &impl ZkvmGuest) {
     let mut bitcoin_state = match input.prev_proof {
         // For genesis block verification, create a fresh state
         BitcoinConsensusPrevProofType::GenesisBlock => {
-            println!("[DEBUG] Creating new BitcoinState from GenesisBlock");
+            // println!("[DEBUG] Creating new BitcoinState from GenesisBlock");
             BitcoinState::new()
         }
         // For incremental verification, verify the previous proof and use its state
         BitcoinConsensusPrevProofType::PrevProof(prev_proof) => {
-            println!("[DEBUG] Using previous BitcoinState from PrevProof");
-            println!(
-                "[DEBUG] Previous block height: {}",
-                prev_proof.bitcoin_state.header_chain_state.block_height
-            );
-            println!(
-                "[DEBUG] Previous JMT root: {:?}",
-                prev_proof.bitcoin_state.utxo_set_commitment.jmt_root
-            );
+            // println!("[DEBUG] Using previous BitcoinState from PrevProof");
+            // println!(
+            //     "[DEBUG] Previous block height: {}",
+            //     prev_proof.bitcoin_state.header_chain_state.block_height
+            // );
+            // println!(
+            //     "[DEBUG] Previous JMT root: {:?}",
+            //     prev_proof.bitcoin_state.utxo_set_commitment.jmt_root
+            // );
             // Ensure the method ID matches
             assert_eq!(prev_proof.method_id, input.method_id);
-            println!("[DEBUG] Method IDs match, verifying previous proof");
+            // println!("[DEBUG] Method IDs match, verifying previous proof");
             // Cryptographically verify the previous proof
             guest.verify(input.method_id, &prev_proof);
-            println!("[DEBUG] Previous proof verified");
+            // println!("[DEBUG] Previous proof verified");
             // Use the state from the previous proof
             prev_proof.bitcoin_state
         }
     };
 
     // Verify all blocks and apply them to the state
-    println!("[DEBUG] Verifying and applying blocks");
+    // println!("[DEBUG] Verifying and applying blocks");
     bitcoin_state.verify_and_apply_blocks(&mut input.input_data);
-    println!("[DEBUG] All blocks verified and applied");
+    // println!("[DEBUG] All blocks verified and applied");
 
     // Commit the final state as the circuit output
-    println!("[DEBUG] Committing BitcoinConsensusCircuitOutput");
+    // println!("[DEBUG] Committing BitcoinConsensusCircuitOutput");
     println!(
         "[DEBUG] Final block height: {}",
         bitcoin_state.header_chain_state.block_height

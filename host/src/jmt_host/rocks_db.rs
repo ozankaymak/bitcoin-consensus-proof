@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use borsh::BorshDeserialize;
 use rocksdb::{ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
 use std::path::Path;
-use tracing::info;
+use tracing::{info, warn};
 
 use jmt::{
     storage::{
@@ -301,19 +301,19 @@ impl TreeReader for RocksDbStorage {
             .cf_handle(VALUES_CF)
             .ok_or_else(|| anyhow!("Column family '{}' not found", VALUES_CF))?;
 
-        // Create composite key prefix (key_hash part)
+        // Create the prefix we want to match exactly
         let prefix = key_hash.0.to_vec();
 
-        // First try direct lookup for exact version match
-        let mut exact_key = prefix.clone();
-        exact_key.extend_from_slice(&max_version.to_be_bytes());
+        // Create read options with prefix seeking enabled
+        let mut read_options = rocksdb::ReadOptions::default();
+        read_options.set_prefix_same_as_start(true); // This is the key setting
 
-        if let Some(value) = self.db.get_cf(cf, &exact_key)? {
-            return Ok(Some(value.to_vec()));
-        }
-
-        // Use prefix iterator to efficiently find all versions of this key
-        let iter = self.db.prefix_iterator_cf(cf, &prefix);
+        // Use prefix iterator with the configured read options
+        let iter = self.db.iterator_cf_opt(
+            cf,
+            read_options,
+            rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
+        );
 
         let mut latest_version = 0;
         let mut latest_value = None;
@@ -321,13 +321,18 @@ impl TreeReader for RocksDbStorage {
         for result in iter {
             let (key, value) = result?;
 
+            // Double-check the key starts with our prefix
+            // (this is just a safety check as set_prefix_same_as_start should ensure this)
+            if !key.starts_with(&prefix) {
+                break; // Stop iterating once we've moved past our prefix
+            }
+
             // Skip if key is too short (should have key_hash + version)
             if key.len() < prefix.len() + 8 {
                 continue;
             }
 
             // Extract version from composite key
-            // Version is stored after the key_hash
             let version_bytes: [u8; 8] = key[prefix.len()..prefix.len() + 8]
                 .try_into()
                 .map_err(|_| anyhow!("Invalid version format"))?;

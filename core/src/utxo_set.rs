@@ -172,7 +172,7 @@ impl UTXO {
         block_time: u32,
         is_coinbase: bool,
     ) -> Self {
-        println!("[DEBUG] Creating UTXO from TxOut");
+        // println!("[DEBUG] Creating UTXO from TxOut");
         let result = UTXO {
             value: Amount::to_sat(txout.value),
             block_height,
@@ -180,7 +180,7 @@ impl UTXO {
             is_coinbase,
             script_pubkey: txout.script_pubkey.to_bytes().to_vec(),
         };
-        println!("[DEBUG] Resulting UTXO: {:?}", result);
+        // println!("[DEBUG] Resulting UTXO: {:?}", result);
         result
     }
 
@@ -195,12 +195,12 @@ impl UTXO {
     ///
     /// A bitcoin-rs TxOut with the same value and script as this UTXO
     pub fn into_txout(&self) -> bitcoin::TxOut {
-        println!("[DEBUG] Converting UTXO into TxOut");
+        // println!("[DEBUG] Converting UTXO into TxOut");
         let result = bitcoin::TxOut {
             value: Amount::from_sat(self.value),
             script_pubkey: ScriptBuf::from_bytes(self.script_pubkey.clone()),
         };
-        println!("[DEBUG] Resulting TxOut: {:?}", result);
+        // println!("[DEBUG] Resulting TxOut: {:?}", result);
         result
     }
 }
@@ -310,8 +310,8 @@ impl UTXO {
     ///
     /// A vector of bytes containing the serialized UTXO
     pub fn to_bytes(&self) -> Vec<u8> {
-        println!("[DEBUG] Serializing UTXO to bytes");
-        println!("[DEBUG] UTXO: {:?}", self);
+        // println!("[DEBUG] Serializing UTXO to bytes");
+        // println!("[DEBUG] UTXO: {:?}", self);
         // Pre-allocate capacity for efficiency
         let mut bytes = Vec::with_capacity(8 + 4 + 4 + 1 + self.script_pubkey.len());
 
@@ -331,7 +331,7 @@ impl UTXO {
         bytes.extend_from_slice(&self.script_pubkey);
 
         let result = bytes;
-        println!("[DEBUG] Serialized UTXO Bytes: {:?}", result);
+        // println!("[DEBUG] Serialized UTXO Bytes: {:?}", result);
         result
     }
 
@@ -349,7 +349,7 @@ impl UTXO {
     ///
     /// A reconstructed UTXO
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        println!("[DEBUG] Deserializing UTXO from bytes");
+        // println!("[DEBUG] Deserializing UTXO from bytes");
 
         // Extract value (first 8 bytes)
         let value = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
@@ -373,7 +373,7 @@ impl UTXO {
             block_time,
             is_coinbase,
         };
-        println!("[DEBUG] Deserialized UTXO: {:?}", result);
+        // println!("[DEBUG] Deserialized UTXO: {:?}", result);
         result
     }
 
@@ -392,7 +392,7 @@ impl UTXO {
     ///
     /// `true` if the UTXO can be spent, `false` otherwise
     pub fn is_mature(&self, current_height: u32) -> bool {
-        println!("[DEBUG] Checking if UTXO is mature");
+        // println!("[DEBUG] Checking if UTXO is mature");
 
         // Non-coinbase outputs can be spent immediately
         if !self.is_coinbase {
@@ -402,7 +402,7 @@ impl UTXO {
         // Coinbase outputs require 100 confirmations before they can be spent
         // Check if we have enough confirmations (current height - UTXO height >= 100)
         let result = current_height >= self.block_height + 100;
-        println!("[DEBUG] Is UTXO Mature: {}", result);
+        // println!("[DEBUG] Is UTXO Mature: {}", result);
         result
     }
 }
@@ -422,14 +422,14 @@ impl UTXOSetGuest {
     ///
     /// A new UTXOSetGuest instance with default values
     pub fn new() -> Self {
-        println!("[DEBUG] Creating new UTXOSetGuest");
+        // println!("[DEBUG] Creating new UTXOSetGuest");
         let result = UTXOSetGuest {
             jmt_root: RootHash::from([
                 83, 80, 65, 82, 83, 69, 95, 77, 69, 82, 75, 76, 69, 95, 80, 76, 65, 67, 69, 72, 79,
                 76, 68, 69, 82, 95, 72, 65, 83, 72, 95, 95,
             ]), // Empty Merkle tree root
         };
-        println!("[DEBUG] New UTXOSetGuest: {:?}", result);
+        // println!("[DEBUG] New UTXOSetGuest: {:?}", result);
         result
     }
 
@@ -443,9 +443,9 @@ impl UTXOSetGuest {
     ///
     /// The current Jellyfish Merkle Tree root hash
     pub fn get_root(&self) -> RootHash {
-        println!("[DEBUG] Getting JMT root");
+        // println!("[DEBUG] Getting JMT root");
         let result = self.jmt_root;
-        println!("[DEBUG] JMT Root: {:?}", result);
+        // println!("[DEBUG] JMT Root: {:?}", result);
         result
     }
 
@@ -463,9 +463,9 @@ impl UTXOSetGuest {
     ///
     /// The removed UTXO if it was in the cache, or None if not found
     // pub fn pop_utxo_from_cache(&mut self, utxo_key: &KeyOutPoint) -> Option<UTXO> {
-    //     println!("[DEBUG] Popping UTXO from cache");
+    //     // println!("[DEBUG] Popping UTXO from cache");
     //     let result = self.utxo_cache.remove(utxo_key);
-    //     println!("[DEBUG] Popped UTXO: {:?}", result);
+    //     // println!("[DEBUG] Popped UTXO: {:?}", result);
     //     result
     // }
 
@@ -477,7 +477,7 @@ impl UTXOSetGuest {
         is_coinbase: bool,
         utxo_cache: &mut BTreeMap<KeyOutPoint, UTXO>,
     ) {
-        println!("[DEBUG] Adding transaction outputs to UTXO cache");
+        // println!("[DEBUG] Adding transaction outputs to UTXO cache");
         let txid = transaction.txid();
 
         for (vout, output) in transaction.output.iter().enumerate() {

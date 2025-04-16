@@ -1,4 +1,4 @@
-use std::{env, fs, path::Path, thread, time::Duration};
+use std::{collections::VecDeque, env, fs, path::Path, thread, time::Duration};
 
 use anyhow::Result;
 use bitcoin::hashes::Hash;
@@ -15,7 +15,7 @@ use host::{
 };
 use jmt::RootHash;
 use risc0_zkvm::{compute_image_id, default_prover, ExecutorEnv, ProverOpts, Receipt};
-use tracing::{error, info, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
 
 const BITCOIN_GUEST_ELF: &[u8] = {
@@ -247,11 +247,11 @@ fn process_batch(
     // Track UTXOs created in this batch (our cache)
     let mut batch_created_utxos: std::collections::BTreeMap<KeyOutPoint, UTXO> =
         std::collections::BTreeMap::new();
-    let mut tx_proofs: Vec<UTXODeletionUpdateProof> = Vec::new();
+    let mut tx_proofs: VecDeque<UTXODeletionUpdateProof> = VecDeque::new();
 
     // Process blocks and track UTXO changes
     for i in start..start + batch_size {
-        info!(
+        warn!(
             "Processing block {} ({} of {})",
             i,
             i - start + 1,
@@ -265,7 +265,7 @@ fn process_batch(
 
         // Process transactions
         for (tx_index, tx) in block.txdata.iter().enumerate() {
-            info!(
+            warn!(
                 "  Processing transaction {}/{}: {}",
                 tx_index,
                 block.txdata.len(),
@@ -274,7 +274,7 @@ fn process_batch(
 
             for (input_index, input) in tx.input.iter().enumerate() {
                 if input.previous_output.txid.to_byte_array() == [0; 32] {
-                    info!("    Skipping coinbase input {}", input_index);
+                    warn!("    Skipping coinbase input {}", input_index);
                     // tx_proofs.push(None);
                     continue;
                 }
@@ -283,6 +283,14 @@ fn process_batch(
                     txid: input.previous_output.txid.to_byte_array(),
                     vout: input.previous_output.vout,
                 };
+
+                warn!(
+                    "    Processing input {}/{}: {:?}:{}",
+                    input_index,
+                    tx.input.len(),
+                    input.previous_output.txid,
+                    input.previous_output.vout
+                );
 
                 // Check if this UTXO was created in our batch
                 if batch_created_utxos.contains_key(&utxo_key) {
@@ -310,7 +318,7 @@ fn process_batch(
                                 new_root: next_root,
                             };
                             current_root = next_root;
-                            tx_proofs.push(utxo_deletion_update_proof)
+                            tx_proofs.push_back(utxo_deletion_update_proof)
                         }
                         Err(_) => {
                             error!(
@@ -329,9 +337,8 @@ fn process_batch(
                     vout: vout as u32,
                 };
 
-                let is_coinbase = tx.input.is_empty()
-                    || (tx.input.len() == 1
-                        && tx.input[0].previous_output.txid.to_byte_array() == [0; 32]);
+                let is_coinbase = tx.input.len() == 1
+                    && tx.input[0].previous_output.txid.to_byte_array() == [0; 32];
 
                 let current_height = match prev_receipt.as_ref() {
                     Some(receipt) => {

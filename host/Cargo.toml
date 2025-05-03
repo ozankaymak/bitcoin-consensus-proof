@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-core = { path = "../core" }
+bitcoin-consensus-core = { path = "../core" }
 borsh.workspace = true
 bitcoin.workspace = true
-risc0-zkvm = {version = "1.2.4", default-features = false, features = ["bonsai", "client", "prove"]}
-risc0-zkp = {version = "1.2.4", default-features = false, features = ["prove"]}
-risc0-binfmt = {version = "1.2.4"}
-risc0-circuit-recursion = {version = "1.2.4"}
+risc0-zkvm = {version = "2.0.1", default-features = false, features = ["bonsai", "client", "prove"]}
+risc0-zkp = {version = "2.0.0", default-features = false, features = ["prove"]}
+risc0-binfmt = {version = "2.0.0"}
+risc0-circuit-recursion = {version = "2.0.0"}
 sha2 =  { version = "0.10.8", default-features = false }
 blake3 = { version = "1.5.0", default-features = false }
 # risc0-groth16.workspace = true
@@ -19,8 +19,16 @@ crypto-bigint.workspace = true
 serde_json.workspace = true
 num-bigint.workspace = true
 num-traits.workspace = true
+serde.workspace = true
 tempfile.workspace = true
+jmt = { version = "0.11.0", features = ["sha2"] }
+anyhow = "1.0"
+hashbrown = "0.15.2"
+parking_lot = "0.12.3"
+rocksdb = "0.23.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
-bitcoin = "0.32.5"
+bitcoin = { version = "0.32.5", features = ["rand"] }

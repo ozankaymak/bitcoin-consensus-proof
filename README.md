@@ -19,7 +19,7 @@ While the initial focus proving Bitcoin related operations using Risc0 zkVM, the
 ## Getting Started
 First, install `Risc0` toolchain. You can refer to [here](https://dev.risczero.com/api/zkvm/install). Next, build the guest program by running:
 ```bash
-BITCOIN_NETWORK=<NETWORK_TYPE> REPR_GUEST_BUILD=1 cargo build -p bitcoin
+BITCOIN_NETWORK=<NETWORK_TYPE> REPR_GUEST_BUILD=1 cargo build --release -p bitcoin
 ```
 where `NETWORK_TYPE` can be `mainnet`, `testnet4`, `signet`, or `regtest`. Then, build the host program by running:
 ```bash
@@ -27,7 +27,7 @@ BITCOIN_NETWORK=NETWORK_TYPE cargo build --release -p host
 ```
 where `NETWORK_TYPE` matches to the one of the previous command. Finally, run:
 ```bash
-./target/release/host None data/proofs/testnet4_first_9.bin 10
+./target/release/host None data/proofs/testnet4/testnet4_first_9.bin 10
 ```
 where
 - The first argument is the previous proof file path (`None` if starting from genesis).

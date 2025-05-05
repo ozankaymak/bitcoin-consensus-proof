@@ -508,3 +508,315 @@ fn process_batch(
         jmt_root: output.bitcoin_state.utxo_set_commitment.jmt_root,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::VecDeque, env, fs, path::Path, thread, time::Duration};
+
+    use bitcoin::hashes::Hash;
+    use bitcoin_consensus_core::{
+        bitcoin_consensus_circuit,
+        block::CircuitBlock,
+        utxo_set::{KeyOutPoint, UTXO},
+        zkvm::ZKProof,
+        BitcoinConsensusCircuitData, BitcoinConsensusCircuitInput, BitcoinConsensusCircuitOutput,
+        BitcoinConsensusPrevProofType, UTXODeletionUpdateProof,
+    };
+    use borsh::BorshDeserialize;
+    use host::{
+        delete_utxo_and_generate_update_proof, insert_utxos_and_generate_update_proofs,
+        jmt_host::rocks_db::RocksDbStorage,
+        mock_host::{MockZkvmHost, ZkvmHost},
+        parse_block_from_file,
+    };
+    use jmt::RootHash;
+    use risc0_zkvm::{compute_image_id, Receipt};
+    use std::time::Instant;
+    use tempfile::{tempdir, TempDir};
+    use tracing::{info, warn, Level};
+    use tracing_subscriber::EnvFilter;
+
+    use crate::{process_batch, BITCOIN_GUEST_ELF, DB_PATH, NETWORK};
+
+    #[ignore = "This tests e2e and takes a long time to run"]
+    #[test]
+    fn test_bitcoin_consensus_guest() -> Result<(), anyhow::Error> {
+        let start = Instant::now();
+        let value = env!("BITCOIN_NETWORK");
+        // println!("Compile-time variable: {}", value);
+        // Initialize tracing
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| EnvFilter::new(Level::ERROR.to_string())),
+            )
+            .init();
+
+        info!("Starting Bitcoin consensus proof testing with MockZkvmHost");
+
+        // Create a temporary directory for the database
+        let temp_dir = TempDir::new()?;
+        let db_path = temp_dir.path().join("db");
+        fs::create_dir_all(&db_path)?;
+        info!("Using temporary database at: {}", db_path.display());
+
+        // Define test parameters
+        let mock_method_id = [1, 2, 3, 4, 5, 6, 7, 8];
+        let batch_size = 100; // Process 2 blocks per batch
+        let num_batches = 700; // Run 2 batches
+        let network = "testnet4"; // Using testnet for more predictable block sizes
+
+        // Initialize RocksDB storage
+        let storage = RocksDbStorage::new(db_path.to_str().unwrap())?;
+        let mut current_root = storage.get_latest_root()?.unwrap_or_else(|| {
+            RootHash::from([
+                83, 80, 65, 82, 83, 69, 95, 77, 69, 82, 75, 76, 69, 95, 80, 76, 65, 67, 69, 72, 79,
+                76, 68, 69, 82, 95, 72, 65, 83, 72, 95, 95,
+            ])
+        });
+
+        info!("Initial JMT root: {:?}", current_root);
+
+        let mut current_prev_proof = BitcoinConsensusPrevProofType::GenesisBlock;
+        let mut current_height = 0;
+
+        let mut receipt: bitcoin_consensus_core::zkvm::ZKProof = ZKProof {
+            method_id: mock_method_id,
+            journal: vec![],
+        };
+
+        // Process batches
+        for batch_num in 1..=num_batches {
+            info!("==================================================");
+            info!("Processing batch {}/{}", batch_num, num_batches);
+            info!("==================================================");
+
+            info!("Starting block height: {}", current_height);
+
+            let mut blocks = Vec::new();
+            let mut batch_created_utxos = std::collections::BTreeMap::new();
+            let mut tx_proofs: VecDeque<UTXODeletionUpdateProof> = VecDeque::new();
+
+            // Process blocks in this batch
+            for i in current_height..current_height + batch_size as u32 {
+                let block_path = format!("../data/blocks/{network}-blocks/{network}_block_{i}.bin");
+                info!("Reading block from: {}", block_path);
+
+                // Parse the block from file (must exist for real test)
+                let block = parse_block_from_file(&block_path)?;
+                let circuit_block = CircuitBlock::from(block.clone());
+                blocks.push(circuit_block.clone());
+
+                // Process transactions for this block - follow the same logic as in the main code
+                for (tx_index, tx) in block.txdata.iter().enumerate() {
+                    warn!(
+                        "Processing transaction {}/{}: {}",
+                        tx_index,
+                        block.txdata.len(),
+                        tx.compute_txid()
+                    );
+
+                    // Process inputs (spend UTXOs)
+                    for (input_index, input) in tx.input.iter().enumerate() {
+                        if input.previous_output.txid.to_byte_array() == [0; 32] {
+                            warn!("Skipping coinbase input {}", input_index);
+                            continue;
+                        }
+
+                        let utxo_key = KeyOutPoint {
+                            txid: input.previous_output.txid.to_byte_array(),
+                            vout: input.previous_output.vout,
+                        };
+
+                        warn!(
+                            "Processing input {}/{}: {:?}:{}",
+                            input_index,
+                            tx.input.len(),
+                            input.previous_output.txid,
+                            input.previous_output.vout
+                        );
+
+                        // Check if this UTXO was created in our batch
+                        if batch_created_utxos.contains_key(&utxo_key) {
+                            info!(
+                                "UTXO {:?}:{} was created and spent within this batch",
+                                utxo_key.txid, utxo_key.vout
+                            );
+                            batch_created_utxos.remove(&utxo_key);
+                        } else {
+                            // Generate deletion proof for pre-existing UTXO
+                            match delete_utxo_and_generate_update_proof(
+                                &storage,
+                                &utxo_key,
+                                &mut current_root,
+                            ) {
+                                Ok((utxo, proof, next_root)) => {
+                                    let utxo_deletion_update_proof = UTXODeletionUpdateProof {
+                                        update_proof: proof,
+                                        utxo,
+                                        new_root: next_root,
+                                    };
+                                    current_root = next_root;
+                                    tx_proofs.push_back(utxo_deletion_update_proof);
+                                }
+                                Err(e) => {
+                                    warn!(
+                                    "Failed to generate deletion proof for UTXO: {:?}:{} - Error: {}",
+                                    utxo_key.txid, utxo_key.vout, e
+                                );
+                                    // Continue processing - in a real test we might want to handle this case
+                                }
+                            }
+                        }
+                    }
+
+                    // Process outputs (create new UTXOs)
+                    for (vout, output) in tx.output.iter().enumerate() {
+                        let utxo_key = KeyOutPoint {
+                            txid: tx.compute_txid().to_byte_array(),
+                            vout: vout as u32,
+                        };
+
+                        let is_coinbase = tx.input.len() == 1
+                            && tx.input[0].previous_output.txid.to_byte_array() == [0; 32];
+
+                        let current_height = i;
+
+                        let utxo = UTXO {
+                            value: output.value.to_sat(),
+                            script_pubkey: output.script_pubkey.as_bytes().to_vec(),
+                            block_height: current_height,
+                            is_coinbase,
+                            block_time: block.header.time,
+                        };
+
+                        // Add to our batch cache
+                        batch_created_utxos.insert(utxo_key, utxo);
+                    }
+                }
+            }
+
+            // Insert new UTXOs and generate proofs
+            info!(
+                "Inserting {} new UTXOs into database",
+                batch_created_utxos.len()
+            );
+            let key_value_pairs = batch_created_utxos
+                .iter()
+                .map(|(key, utxo)| (key.clone(), utxo.clone()))
+                .collect::<Vec<(KeyOutPoint, UTXO)>>();
+
+            let insertion_update_proofs = insert_utxos_and_generate_update_proofs(
+                &storage,
+                key_value_pairs.as_ref(),
+                &mut current_root,
+            )?;
+
+            // Prepare the input data for the circuit
+            let input_data = BitcoinConsensusCircuitData {
+                blocks,
+                utxo_deletion_update_proofs: tx_proofs,
+                utxo_insertion_update_proofs: insertion_update_proofs,
+            };
+
+            info!("Input data prepared for circuit execution");
+            info!("  Number of blocks: {}", input_data.blocks.len());
+            info!(
+                "  Number of UTXO deletion proofs: {}",
+                input_data.utxo_deletion_update_proofs.len()
+            );
+            info!("  Current JMT root: {:?}", current_root);
+
+            let input = BitcoinConsensusCircuitInput {
+                method_id: mock_method_id,
+                prev_proof: current_prev_proof.clone(),
+                input_data,
+            };
+
+            // Create a new host instance for this batch
+            let batch_host = MockZkvmHost::new();
+
+            // Write the input to the host
+            batch_host.write(&input);
+            // println!("Input written to host");
+
+            if batch_num > 1 {
+                batch_host.add_assumption(receipt);
+            }
+
+            // Execute the consensus circuit
+            info!("Executing Bitcoin consensus circuit");
+            bitcoin_consensus_circuit(&batch_host);
+            info!("Circuit execution completed");
+
+            // Get the proof
+            receipt = batch_host.prove(&mock_method_id);
+
+            // Extract and verify the output
+            let output = BitcoinConsensusCircuitOutput::try_from_slice(&receipt.journal)?;
+
+            info!("Circuit output details:");
+            info!("  Method ID: {:?}", output.method_id);
+            info!(
+                "  Block height: {}",
+                output.bitcoin_state.header_chain_state.block_height
+            );
+            info!(
+                "  JMT Root: {:?}",
+                output.bitcoin_state.utxo_set_commitment.jmt_root
+            );
+
+            // Verify JMT root matches
+            info!("Verifying JMT root consistency:");
+            info!(
+                "  Receipt JMT root: {:?}",
+                output.bitcoin_state.utxo_set_commitment.jmt_root
+            );
+            info!("  Local JMT root: {:?}", current_root);
+
+            // Ensure roots match
+            assert_eq!(
+                output.bitcoin_state.utxo_set_commitment.jmt_root, current_root,
+                "JMT root mismatch between guest and host"
+            );
+
+            // Verify block height is as expected
+            let expected_height = match &current_prev_proof.clone() {
+                BitcoinConsensusPrevProofType::GenesisBlock => batch_size as u32 - 1,
+                BitcoinConsensusPrevProofType::PrevProof(prev) => {
+                    prev.bitcoin_state.header_chain_state.block_height + batch_size as u32
+                }
+            };
+
+            assert_eq!(
+                output.bitcoin_state.header_chain_state.block_height, expected_height,
+                "Block height mismatch"
+            );
+
+            // Update state for next batch
+            current_prev_proof = BitcoinConsensusPrevProofType::PrevProof(output.clone());
+            current_height = output.bitcoin_state.header_chain_state.block_height + 1; // Next block to process
+            current_root = output.bitcoin_state.utxo_set_commitment.jmt_root;
+
+            info!("Batch {} completed successfully", batch_num);
+            info!(
+                "  Final block height: {}",
+                output.bitcoin_state.header_chain_state.block_height
+            );
+            info!("  Final JMT root: {:?}", current_root);
+        }
+
+        info!("All batches completed successfully!");
+        info!("Final block height: {}", current_height - 1); // Adjust for the +1 above
+        info!("Final JMT root: {:?}", current_root);
+
+        let end = Instant::now();
+        let duration = end.duration_since(start);
+
+        println!("Test started at: {:?}", start);
+        println!("Test ended at: {:?}", end);
+        println!("Total duration: {:?}", duration);
+
+        Ok(())
+    }
+}

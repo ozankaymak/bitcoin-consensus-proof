@@ -42,7 +42,6 @@ use constants::{MAX_BLOCK_SIGOPS_COST, WITNESS_SCALE_FACTOR};
 use header_chain::HeaderChainState;
 use jmt::{proof::UpdateMerkleProof, KeyHash, RootHash};
 use jmt::{SimpleHasher, ValueHash};
-use params::NETWORK_PARAMS;
 use script::txout::get_txout_type;
 use script::{Exec, ExecCtx, Experimental, Options, TxTemplate};
 use serde::{Deserialize, Serialize};
@@ -71,6 +70,8 @@ pub mod utxo_set;
 pub mod zkvm;
 
 pub mod script;
+
+pub mod softfork_manager;
 
 pub const NOT_EXPERIMENTAL: Experimental = Experimental { op_cat: false };
 
@@ -247,7 +248,6 @@ impl BitcoinState {
 
     pub fn verify_and_apply_blocks(&mut self, input: &mut BitcoinConsensusCircuitData) {
         let mut utxo_cache: BTreeMap<KeyOutPoint, UTXO> = BTreeMap::new();
-        let num_blocks = input.blocks.len();
 
         for (block_idx, block) in input.blocks.iter().enumerate() {
             // println!(
@@ -259,8 +259,42 @@ impl BitcoinState {
             //     block.transactions.len()
             // );
 
+            // Before validating header, know which BIP flags are active in the next block
+            let expected_next_height = self.header_chain_state.block_height.wrapping_add(1);
+            // println!(
+            //     "[INFO] Expected next block height: {}",
+            //     expected_next_height
+            // );
+            let bip_flags = softfork_manager::BIPFlags::at_height(expected_next_height);
+            // println!("[INFO] BIP flags: {:?}", bip_flags);
+
+            let time_to_compare_against = if bip_flags.is_bip113_active() {
+                self.header_chain_state.get_median_time_past()
+            } else {
+                block.block_header.time
+            };
+
             self.header_chain_state
                 .verify_and_apply_header(&block.block_header);
+
+            let expected_block_subsidy = self.header_chain_state.calculate_block_subsidy();
+
+            let claimed_block_reward = block.get_claimed_block_reward().to_sat();
+
+            block.check_block_simple();
+
+            block.verify_merkle_root();
+            block.verify_bip34_block_height(bip_flags.is_bip34_active(), expected_next_height);
+            block.verify_witness_commitment(bip_flags.is_bip141_active());
+
+            // Check if all txs are finalized
+            for transaction in block.transactions.iter() {
+                transaction.check_tx_simple();
+                transaction.verify_final_tx(
+                    time_to_compare_against,
+                    self.header_chain_state.block_height,
+                );
+            }
 
             // Process transactions
             let mut sigops = 0u32;
@@ -268,21 +302,26 @@ impl BitcoinState {
             //     "[INFO] Processing {} transactions in block",
             //     block.transactions.len()
             // );
+            let mut total_fee = 0u64;
 
             for transaction in block.transactions.iter() {
-                self.verify_and_apply_transaction(
+                let fee = self.verify_and_apply_transaction(
                     &mut utxo_cache,
                     &mut sigops,
                     &transaction,
                     &mut input.utxo_deletion_update_proofs,
+                    bip_flags.is_assume_valid(),
+                    bip_flags.is_bip68_active(),
+                    time_to_compare_against,
                 );
+                total_fee += fee;
             }
 
-            // Check sigops
-            // println!(
-            //     "[INFO] Block sigops check - Total: {}, Limit: {}",
-            //     sigops, MAX_BLOCK_SIGOPS_COST
-            // );
+            // Check if the claimed block reward is correct
+            if claimed_block_reward > expected_block_subsidy + total_fee {
+                panic!("Block reward mismatch");
+            }
+
             if sigops * WITNESS_SCALE_FACTOR > MAX_BLOCK_SIGOPS_COST {
                 println!(
                     "[ERROR] Block sigops cost exceeds limits: {} > {}",
@@ -290,23 +329,6 @@ impl BitcoinState {
                     MAX_BLOCK_SIGOPS_COST
                 );
                 panic!("Block sigops cost exceeds limits");
-            }
-
-            // BIP-34 check
-            if self.header_chain_state.block_height >= NETWORK_PARAMS.bip34_height {
-                // println!(
-                //     "[INFO] Performing BIP-34 check at height {}",
-                //     self.header_chain_state.block_height
-                // );
-                let coinbase_tx = &block.transactions[0];
-                assert!(
-                    coinbase_tx.input.is_empty()
-                        || (coinbase_tx.input.len() == 1
-                            && coinbase_tx.input[0].previous_output.txid.to_byte_array()
-                                == [0; 32]),
-                    "First transaction must be coinbase"
-                );
-                // println!("[INFO] BIP-34 check passed");
             }
         }
 
@@ -330,45 +352,10 @@ impl BitcoinState {
         total_sigops: &mut u32,
         transaction: &CircuitTransaction,
         deletion_update_proof_vec: &mut VecDeque<UTXODeletionUpdateProof>,
-    ) {
-        // println!(
-        //     "[INFO] Verifying transaction - TXID: {:?}, Version: {}, Locktime: {}",
-        //     transaction.txid(),
-        //     transaction.version,
-        //     transaction.lock_time
-        // );
-
-        // Basic transaction checks
-        // println!(
-        //     "[INFO] Transaction structure - Inputs: {}, Outputs: {}, Size: {} bytes",
-        //     transaction.input.len(),
-        //     transaction.output.len(),
-        //     transaction.total_size()
-        // );
-
-        if transaction.input.is_empty() {
-            // println!("[ERROR] Transaction has no inputs");
-            panic!("Transaction has no inputs");
-        }
-
-        if transaction.output.is_empty() {
-            // println!("[ERROR] Transaction has no outputs");
-            panic!("Transaction has no outputs");
-        }
-
-        let tx_size = transaction.total_size();
-        // println!(
-        //     "[INFO] Transaction size check - Size: {} bytes, Limit: 4MB",
-        //     tx_size * 4
-        // );
-        if tx_size * 4 > 4_000_000 {
-            // println!(
-            //     "[ERROR] Transaction size exceeds limits: {} > 4MB",
-            //     tx_size * 4
-            // );
-            panic!("Transaction size exceeds limits");
-        }
-
+        is_assume_valid: bool,
+        is_bip68_active: bool,
+        time_to_compare: u32,
+    ) -> u64 {
         // UTXO verification
         let mut curr_root_hash = self.utxo_set_commitment.jmt_root;
         // println!(
@@ -377,6 +364,8 @@ impl BitcoinState {
         // );
 
         let mut prevouts: Vec<UTXO> = Vec::new();
+        let mut amount_in = 0u64;
+        let mut amount_out = 0u64;
 
         // println!(
         //     "[INFO] Processing {} transaction inputs with UTXO proofs",
@@ -385,27 +374,9 @@ impl BitcoinState {
         let is_coinbase = transaction.is_coinbase();
         // Coinbase transaction checks
         if is_coinbase {
-            // No need for input existence check
-            // println!(
-            //     "[INFO] Coinbase transaction - Script length: {}",
-            //     transaction.input[0].script_sig.len()
-            // );
-            let script_len = transaction.input[0].script_sig.len();
-            if script_len < 2 || script_len > 100 {
-                // println!(
-                //     "[ERROR] Coinbase script length out of range: {}",
-                //     script_len
-                // );
-                panic!("Coinbase script length out of range");
-            }
         } else {
             // println!("[INFO] Non-coinbase transaction - Checking previous outputs");
             for tx_input in transaction.input.iter() {
-                if tx_input.previous_output.is_null() {
-                    // println!("[ERROR] Null previous output in input {}", idx);
-                    panic!("Null previous output");
-                }
-
                 // println!(
                 //     "[INFO] Processing input {}/{} - Previous output: {:?}",
                 //     idx + 1,
@@ -446,50 +417,70 @@ impl BitcoinState {
 
         let prev_txouts = prevouts
             .iter()
-            .map(|utxo| utxo.into_txout().clone())
+            .map(|utxo| utxo.into_txout())
             .collect::<Vec<_>>();
 
         if !is_coinbase {
+            if is_bip68_active {
+                transaction.sequence_locks(
+                    is_bip68_active,
+                    &prevouts,
+                    time_to_compare,
+                    self.header_chain_state.block_height,
+                );
+            }
             // Verify transaction inputs
             for (input_idx, input) in transaction.input.iter().enumerate() {
-                // let prev_txout_type = txout_type(&prev_txouts[input_idx].script_pubkey);
-                // TODO: Verify transaction inputs
-                let taproot_script_leafhash = if prev_txouts[input_idx].script_pubkey.is_p2tr()
-                    && transaction.inner().input[input_idx].witness.len() > 1
-                {
-                    // The last witness element is the merkle inclusion proof, the penultimate is the unlock script
-                    let unlock_script = input.witness.tapscript().unwrap();
-                    Some(TapLeafHash::from_script(
-                        unlock_script,
-                        LeafVersion::TapScript,
-                    ))
-                } else {
-                    None
-                };
-                let tx_template = TxTemplate {
-                    tx: transaction.inner().clone(),
-                    prevouts: prev_txouts.clone(), // TODO: Remove these clones
-                    input_idx,
-                    taproot_script_leafhash,
-                };
-                let (prev_txout_type, script, witness) =
-                    get_prev_txout_type_with_script_and_witness(
-                        transaction,
-                        &prev_txouts,
-                        input_idx,
-                    );
-
-                let mut exec =
-                    Exec::new(prev_txout_type, OPTIONS, tx_template, script, witness).unwrap();
-
-                loop {
-                    if exec.exec_next().is_err() {
-                        break;
+                let prev_height = prevouts[input_idx].block_height;
+                let is_coinbase = prevouts[input_idx].is_coinbase;
+                amount_in += prevouts[input_idx].value;
+                if is_coinbase {
+                    // 100 blocks maturity for coinbase outputs
+                    if self.header_chain_state.block_height - prev_height < 100 {
+                        panic!("Coinbase output not matured");
                     }
                 }
-                if !exec.result().unwrap().success {
-                    panic!("Script execution failed, details: {:?}", exec.result());
+                if !is_assume_valid {
+                    let taproot_script_leafhash = if prev_txouts[input_idx].script_pubkey.is_p2tr()
+                        && transaction.inner().input[input_idx].witness.len() > 1
+                    {
+                        // The last witness element is the merkle inclusion proof, the penultimate is the unlock script
+                        let unlock_script = input.witness.tapscript().unwrap();
+                        Some(TapLeafHash::from_script(
+                            unlock_script,
+                            LeafVersion::TapScript,
+                        ))
+                    } else {
+                        None
+                    };
+                    let tx_template = TxTemplate {
+                        tx: transaction.inner().clone(),
+                        prevouts: prev_txouts.clone(), // TODO: Remove these clones
+                        input_idx,
+                        taproot_script_leafhash,
+                    };
+                    let (prev_txout_type, script, witness) =
+                        get_prev_txout_type_with_script_and_witness(
+                            transaction,
+                            &prev_txouts,
+                            input_idx,
+                        );
+
+                    let mut exec =
+                        Exec::new(prev_txout_type, OPTIONS, tx_template, script, witness).unwrap();
+
+                    loop {
+                        if exec.exec_next().is_err() {
+                            break;
+                        }
+                    }
+                    if !exec.result().unwrap().success {
+                        panic!("Script execution failed, details: {:?}", exec.result());
+                    }
                 }
+            }
+            for output in transaction.output.iter() {
+                amount_out += output.value.to_sat();
             }
         }
 
@@ -500,51 +491,15 @@ impl BitcoinState {
             is_coinbase,
             utxo_cache,
         );
-    }
 
-    pub fn check_coinbase_tx(&self, block: &CircuitBlock) -> bool {
-        // println!("[DEBUG] Checking coinbase transaction");
-        let coinbase_tx = &block.transactions[0];
-
-        // println!("[DEBUG] Checking basic coinbase structure");
-        let tx_checks = coinbase_tx.input.len() == 1
-            && coinbase_tx.inner().input[0].previous_output.txid
-                == bitcoin::Txid::from_byte_array([0; 32])
-            && coinbase_tx.inner().input[0].previous_output.vout == 0xFFFFFFFF;
-
-        // println!("[DEBUG] Basic coinbase check result: {}", tx_checks);
-
-        // TODO: Make sure BIP34 (height in coinbase) is enforced
-        let bip34_height = block.get_bip34_block_height();
-        let expected_height = self.header_chain_state.block_height + 1;
-        // println!(
-        //     "[DEBUG] BIP34 check: block height in coinbase = {}, expected = {}",
-        //     bip34_height, expected_height
-        // );
-        let _bip34_check = bip34_height == expected_height;
-
-        // TODO: Make sure BIP141 (if there exists a segwit tx in the block, then wtxid commitment is in one of the outputs as OP_RETURN) is enforced
-        let is_segwit = coinbase_tx.is_segwit();
-        // println!("[DEBUG] Checking BIP141. Coinbase is segwit: {}", is_segwit);
-
-        let _bip141_check = if is_segwit {
-            let has_op_return = coinbase_tx
-                .output
-                .iter()
-                .any(|output| output.script_pubkey.is_op_return());
-            // println!(
-            //     "[DEBUG] BIP141 check: segwit coinbase has OP_RETURN: {}",
-            //     has_op_return
-            // );
-            has_op_return
-        } else {
-            // println!("[DEBUG] BIP141 check skipped: not a segwit coinbase");
-            true
-        };
-
-        // TODO: Make sure block reward is correct (block subsidy + fees >= sum of outputs)
-        // println!("[DEBUG] Coinbase check completed successfully");
-        true
+        if amount_in < amount_out {
+            panic!("Transaction output exceeds input value");
+        }
+        let fee = amount_in - amount_out;
+        if fee > 2_100_000_000_000_000 {
+            panic!("Transaction fee exceeds maximum limit");
+        }
+        return fee;
     }
 }
 

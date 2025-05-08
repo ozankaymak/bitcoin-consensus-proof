@@ -10,6 +10,7 @@
 // https://github.com/chainwayxyz/citrea/blob/0acb887b1a766fac1a482a68c6d51ecf9661f538/crates/bitcoin-da/src/spec/transaction.rs
 
 use bitcoin::absolute::LockTime;
+use bitcoin::blockdata::weight::WITNESS_SCALE_FACTOR;
 use bitcoin::consensus::Encodable;
 use bitcoin::hashes::Hash;
 use bitcoin::transaction::Version;
@@ -20,22 +21,13 @@ use std::ops::{Deref, DerefMut};
 
 use crate::constants::{LOCKTIME_THRESHOLD, SEGWIT_FLAG, SEGWIT_MARKER};
 use crate::hashes::calculate_double_sha256;
-use crate::header_chain::CircuitBlockHeader;
+use crate::utxo_set::UTXO;
 
 // Constants for BIP-68 (Relative timelock)
 // These constants are used to decode and interpret the sequence field in transaction inputs
 
-/// Flag to indicate that sequence numbers should be validated as relative timelocks
-const LOCKTIME_VERIFY_SEQUENCE: u32 = 0x00000080;
-
 /// Granularity for time-based relative timelocks (2^9 = 512 seconds, approx. 9 minutes)
 const SEQUENCE_LOCKTIME_GRANULARITY: u8 = 9;
-
-/// Flag that indicates a sequence number should not be interpreted as a relative timelock
-const SEQUENCE_LOCKTIME_DISABLED: u32 = 0x80000000;
-
-/// Flag to indicate whether the sequence number encodes a block height (0) or time (1)
-const SEQUENCE_LOCKTIME_TYPE_FLAG: u32 = 0x00400000;
 
 /// Mask to extract the actual locktime value from a sequence number
 const SEQUENCE_LOCKTIME_MASK: u32 = 0x0000FFFF;
@@ -232,58 +224,78 @@ impl CircuitTransaction {
         result
     }
 
-    /// Determines if the transaction is final according to Bitcoin consensus rules
-    ///
-    /// A transaction is considered final if:
-    /// 1. Its locktime is 0, OR
-    /// 2. The locktime is less than the block height/time and is satisfied, OR
-    /// 3. All inputs have SEQUENCE_FINAL values (0xFFFFFFFF)
-    ///
-    /// This implements Bitcoin Core's IsFinalTx logic, which is used to determine
-    /// if a transaction can be included in a block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block_height` - The height of the block containing this transaction
-    /// * `block_time` - The timestamp of the block containing this transaction
-    ///
-    /// # Returns
-    ///
-    /// `true` if the transaction is final, `false` otherwise
-    pub fn is_final_tx(&self, block_height: i32, block_time: i64) -> bool {
-        // println!("[DEBUG] Checking if transaction is final");
-
-        // Case 1: If nLockTime is 0, transaction is always final
-        if self.0.lock_time.to_consensus_u32() == 0 {
-            return true;
+    pub fn check_tx_simple(&self) {
+        // Check if inputs are empty
+        if self.inner().input.is_empty() {
+            panic!("[ERROR] Transaction has no inputs");
+        }
+        // Check if outputs are empty
+        if self.inner().output.is_empty() {
+            panic!("[ERROR] Transaction has no outputs");
+        }
+        // Tx with no witness size check
+        if self.base_size() * WITNESS_SCALE_FACTOR > 4_000_000 {
+            panic!("[ERROR] Size of transaction without witness is too large");
         }
 
-        // Get lock time as both u32 and i64 for comparison
-        let lock_time_u32 = self.0.lock_time.to_consensus_u32();
-        let lock_time_i64 = lock_time_u32 as i64;
-
-        // Case 2: Check if locktime is satisfied by the current block height/time
-        // If locktime < LOCKTIME_THRESHOLD (500,000,000), it's a block height locktime
-        // Otherwise, it's a timestamp locktime
-        if (lock_time_u32 < LOCKTIME_THRESHOLD && lock_time_i64 < block_height as i64)
-            || (lock_time_u32 >= LOCKTIME_THRESHOLD && lock_time_i64 < block_time)
-        {
-            return true;
+        // Output amount check
+        let mut total_amount: u64 = 0;
+        for output in self.output.iter() {
+            if output.value.to_sat() > 2_100_000_000_000_000 {
+                panic!("[ERROR] Output amount exceeds maximum");
+            }
+            total_amount += output.value.to_sat();
         }
 
-        // Case 3: Transaction is still considered final if all inputs have SEQUENCE_FINAL
-        // This allows spending inputs even if the locktime isn't satisfied yet
-        for txin in &self.0.input {
-            // If any input doesn't have SEQUENCE_FINAL, the transaction isn't final
-            if txin.sequence != Sequence::MAX {
-                return false;
+        // Total amount check
+        if total_amount > 2_100_000_000_000_000 {
+            panic!("[ERROR] Total amount exceeds maximum");
+        }
+
+        // Inputs duplicate check
+        let mut seen_inputs = std::collections::HashSet::new();
+        for input in self.inner().input.iter() {
+            if seen_inputs.contains(&input.previous_output) {
+                panic!("[ERROR] Duplicate input found");
+            }
+            seen_inputs.insert(input.previous_output);
+        }
+
+        if self.is_coinbase() {
+            let script_len = self.input[0].script_sig.len();
+            if script_len < 2 || script_len > 100 {
+                panic!("Coinbase script length out of range");
+            }
+        } else {
+            for input in self.input.iter() {
+                if input.previous_output.is_null() {
+                    panic!("Null previous output");
+                }
             }
         }
+    }
 
-        // If we get here, all inputs have SEQUENCE_FINAL
-        let result = true;
-        // println!("[DEBUG] Is Final Transaction: {}", result);
-        result
+    /// Does not include both block_time and median_time_past as which one will be used is already checked
+    pub fn verify_final_tx(&self, time_to_compare: u32, block_height: u32) {
+        // println!("[DEBUG] Checking if transaction is final");
+
+        let lock_time = self.0.lock_time.to_consensus_u32();
+
+        if lock_time == 0 {
+            return;
+        }
+
+        if (lock_time < LOCKTIME_THRESHOLD && lock_time <= block_height)
+            || (lock_time >= LOCKTIME_THRESHOLD && lock_time < time_to_compare)
+        {
+            return;
+        }
+
+        for txin in &self.0.input {
+            if txin.sequence != Sequence::MAX {
+                panic!("[ERROR] Transaction is not final");
+            }
+        }
     }
 
     /// Calculates relative timelock requirements based on BIP-68
@@ -309,25 +321,24 @@ impl CircuitTransaction {
     /// Panics if `prev_heights` doesn't have the same length as the transaction inputs.
     pub fn calculate_sequence_locks(
         &self,
-        flags: u32,
-        prev_heights: &mut Vec<i32>,
-        block: &CircuitBlockHeader,
-    ) -> (i32, i64) {
+        is_bip68_active: bool,
+        prevouts: &Vec<UTXO>,
+    ) -> (u32, u32) {
         // println!("[DEBUG] Calculating sequence locks");
 
         // Ensure we have height information for each input
-        assert_eq!(prev_heights.len(), self.0.input.len());
+        assert_eq!(prevouts.len(), self.0.input.len());
 
         // Will be set to the equivalent height- and time-based nLockTime values
         // that would be necessary to satisfy all relative lock-time constraints.
         // The semantics of nLockTime are the last invalid height/time, so
         // use -1 to have the effect of any height or time being valid.
-        let mut min_height = -1;
-        let mut min_time = -1;
+        let mut min_height = 0;
+        let mut min_time = 0;
 
         // BIP-68 only applies to transactions version 2 or higher
         // and only when LOCKTIME_VERIFY_SEQUENCE flag is set
-        let enforce_bip68 = self.0.version.0 >= 2 && flags & LOCKTIME_VERIFY_SEQUENCE != 0;
+        let enforce_bip68 = self.0.version.0 >= 2 && is_bip68_active;
 
         // Skip processing if BIP-68 is not being enforced
         if !enforce_bip68 {
@@ -338,38 +349,37 @@ impl CircuitTransaction {
         for (txin_index, txin) in self.0.input.iter().enumerate() {
             // Sequence numbers with the most significant bit set are not
             // treated as relative lock-times
-            if (txin.sequence.0 & SEQUENCE_LOCKTIME_DISABLED) != 0 {
+            if !txin.sequence.is_relative_lock_time() {
                 // The height of this input is not relevant for sequence locks
-                prev_heights[txin_index] = 0;
                 continue;
             }
 
             // Get the height of the block containing the spent output
-            let coin_height = prev_heights[txin_index];
+            let coin_height = prevouts[txin_index].block_height;
+            let coin_time = prevouts[txin_index].block_time;
+
+            // let time_lock = txin.sequence.to_relative_lock_time();
 
             // Check if this is a time-based relative lock time (bit 22 set)
-            if (txin.sequence.0 & SEQUENCE_LOCKTIME_TYPE_FLAG) != 0 {
-                // Time-based relative lock-times are measured from the smallest allowed
-                // timestamp of the block containing the output being spent,
-                // which is the median time past of the block prior.
-                let coin_time =
-                    get_median_time_past_for_height(block, std::cmp::max(coin_height - 1, 0));
-
+            if txin.sequence.is_time_locked() {
                 // Calculate the lock time in seconds
                 // The 16-bit mask is shifted by the granularity (9 bits = 512 seconds)
                 let sequence_locked_seconds =
                     (txin.sequence.0 & SEQUENCE_LOCKTIME_MASK) << SEQUENCE_LOCKTIME_GRANULARITY;
 
+                // Relative timelock must exist and it should be in seconds
+                // let time_lock_seconds = time_lock.expect("Time lock should be in seconds");
+
                 // Calculate when this input can be spent
                 // NOTE: Subtract 1 to maintain nLockTime semantics (last invalid time)
-                let new_min_time = coin_time + (sequence_locked_seconds as i64) - 1;
+                let new_min_time = coin_time + (sequence_locked_seconds) - 1;
 
                 // Keep track of the most restrictive timelock
                 min_time = std::cmp::max(min_time, new_min_time);
             } else {
                 // Height-based relative lock time (bit 22 not set)
                 // The 16-bit mask gives the number of blocks directly
-                let sequence_locked_height = (txin.sequence.0 & SEQUENCE_LOCKTIME_MASK) as i32;
+                let sequence_locked_height = txin.sequence.0 & SEQUENCE_LOCKTIME_MASK;
 
                 // Calculate when this input can be spent
                 // NOTE: Subtract 1 to maintain nLockTime semantics (last invalid height)
@@ -400,19 +410,19 @@ impl CircuitTransaction {
     ///
     /// `true` if all sequence locks are satisfied, `false` otherwise
     pub fn evaluate_sequence_locks(
-        block: &CircuitBlockHeader,
-        block_height: i32,
-        lock_pair: (i32, i64),
+        block_height: u32,
+        median_time_past: u32,
+        lock_pair: (u32, u32),
     ) -> bool {
         // println!("[DEBUG] Evaluating sequence locks");
 
         // Get current block time (median time past)
-        let block_time = get_median_time_past(block);
+        // let block_time = get_median_time_past(block);
 
         // Check if either the height or time lock requirement hasn't been met
         // The locks specify the last invalid block/time, so the current block/time
         // must be strictly greater to be valid
-        if lock_pair.0 >= block_height || lock_pair.1 >= block_time {
+        if lock_pair.0 >= block_height || lock_pair.1 >= median_time_past {
             return false;
         }
 
@@ -440,84 +450,23 @@ impl CircuitTransaction {
     /// `true` if all sequence locks are satisfied, `false` otherwise
     pub fn sequence_locks(
         &self,
-        flags: u32,
-        prev_heights: &mut Vec<i32>,
-        block: &CircuitBlockHeader,
-        block_height: i32,
-    ) -> bool {
+        is_bip68_active: bool,
+        prevouts: &Vec<UTXO>,
+        median_time_past: u32,
+        block_height: u32,
+    ) {
         // println!("[DEBUG] Checking sequence locks");
 
         // First, calculate the sequence locks
-        let lock_pair = self.calculate_sequence_locks(flags, prev_heights, block);
+        let lock_pair = self.calculate_sequence_locks(is_bip68_active, prevouts);
 
         // Then, evaluate if they're satisfied
-        let result = Self::evaluate_sequence_locks(block, block_height, lock_pair);
+        let result = Self::evaluate_sequence_locks(block_height, median_time_past, lock_pair);
 
-        // println!("[DEBUG] Sequence Locks Check: {}", result);
-        result
+        if !result {
+            panic!("[ERROR] Sequence locks not satisfied");
+        }
     }
-}
-
-// Helper functions for timelock operations
-
-/// Gets the median time past for a block at the given height
-///
-/// The median time past (MTP) is used for time-based lock validation and is
-/// defined as the median timestamp of the previous 11 blocks. This provides
-/// a more stable notion of "block time" that miners cannot manipulate easily.
-///
-/// In Bitcoin, MTP was introduced by BIP-113 to address timestamp manipulation
-/// issues. Using the median of the last 11 blocks creates a more predictable and
-/// manipulation-resistant time reference for consensus rules.
-///
-/// Note: This is a simplified implementation that would need to be expanded
-/// in a full Bitcoin implementation to actually compute the median of the
-/// last 11 blocks' timestamps. The full implementation would require access
-/// to the blockchain history to retrieve the timestamps of the previous blocks.
-///
-/// # Arguments
-///
-/// * `header` - The current block header for context
-/// * `height` - The block height to get the median time past for
-///
-/// # Returns
-///
-/// The median time past as a Unix timestamp (seconds since epoch)
-fn get_median_time_past_for_height(header: &CircuitBlockHeader, height: i32) -> i64 {
-    // In a real implementation, this would:
-    // 1. Look up the block at the given height
-    // 2. Retrieve the timestamps of that block and its 10 ancestors
-    // 3. Sort those timestamps
-    // 4. Return the middle value (median) of those sorted timestamps
-    //
-    // For circuit simplicity in this implementation, we'll just return the block's timestamp
-    // as a simplification. This is not consensus-compatible with Bitcoin but serves as
-    // a placeholder for the actual implementation.
-    header.time as i64
-}
-
-/// Gets the median time past for the current block
-///
-/// The median time past (MTP) is a critical concept in Bitcoin's consensus rules,
-/// especially for time-based locks like OP_CHECKLOCKTIMEVERIFY and BIP-68 sequence
-/// locks. By using the median of the previous 11 blocks' timestamps rather than
-/// the current block's timestamp, Bitcoin prevents miners from manipulating
-/// timelocks by setting extreme timestamp values.
-///
-/// This is a convenience function that provides the MTP for the current block.
-///
-/// # Arguments
-///
-/// * `header` - The block header to get the median time past for
-///
-/// # Returns
-///
-/// The median time past as a Unix timestamp (seconds since epoch)
-fn get_median_time_past(header: &CircuitBlockHeader) -> i64 {
-    // In a real implementation, this would compute the median of the
-    // last 11 blocks' timestamps (including this block's ancestors)
-    // For now, we'll just return the block's timestamp as a simplification
-    header.time as i64
 }
 
 /// Implementation of Borsh serialization for CircuitTransaction

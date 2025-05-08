@@ -242,6 +242,22 @@ impl HeaderChainState {
         result
     }
 
+    /// Returns the block subsidy amount in satoshis
+    pub fn calculate_block_subsidy(&self) -> u64 {
+        5_000_000_000 >> (self.block_height / 210_000)
+    }
+
+    /// Returns the median time of the last 11 blocks, which should increase monotonically
+    pub fn get_median_time_past(&self) -> u32 {
+        // println!("[DEBUG] Getting median time past");
+        // Calculate the median of the last 11 timestamps
+        let mut timestamps = self.prev_11_timestamps;
+        timestamps.sort_unstable();
+        let median_time = median(timestamps);
+        // println!("[DEBUG] Median Time Past: {}", median_time);
+        median_time
+    }
+
     /// Verifies a block header and updates the chain state
     ///
     /// This is the core validation function that:

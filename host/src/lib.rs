@@ -12,6 +12,7 @@ use sha2::Sha256;
 use tracing::{info, warn};
 
 pub mod jmt_host;
+pub mod mock_host;
 
 // Parse a block from a binary file
 pub fn parse_block_from_file(file_path: &str) -> Result<Block, anyhow::Error> {
@@ -189,8 +190,8 @@ pub fn insert_utxos_and_generate_update_proofs(
     )?;
     warn!("HOST: Values inserted, proof generated");
     warn!("HOST: root after insert: {:?}", root_after_insert);
-    warn!("HOST: Updates: {:?}", updates);
-    warn!("HOST: insertion_proof: {:?}", insertion_proof);
+    // warn!("HOST: Updates: {:?}", updates);
+    // warn!("HOST: insertion_proof: {:?}", insertion_proof);
     storage.update_with_batch(root_after_insert, batch, latest_version + 1)?;
 
     let latest_version = storage.get_latest_version()?;

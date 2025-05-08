@@ -28,21 +28,6 @@ pub struct ZKProof {
     pub journal: Vec<u8>,
 }
 
-/// Interface for zero-knowledge virtual machine hosts
-///
-/// This trait defines the necessary functionality for interacting with
-/// a zkVM from the host side.
-pub trait ZkvmHost {
-    /// Writes data to the guest
-    fn write<T: borsh::BorshSerialize>(&self, value: &T);
-
-    /// Adds an existing proof as an assumption for this execution
-    fn add_assumption(&self, proof: ZKProof);
-
-    /// Executes the zkVM program and generates a proof
-    fn prove(&self, elf: &[u32]) -> ZKProof;
-}
-
 /// Implementation of ZkvmGuest for Risc0 zkVM
 #[derive(Debug, Clone)]
 pub struct Risc0Guest;

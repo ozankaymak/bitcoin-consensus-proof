@@ -57,17 +57,19 @@ fn main() {
     }
 
     // Use embed_methods_with_options with our custom options
-    let guest_pkg_to_options = get_guest_options(network.clone());
+    let (guest_pkg_to_options, if_repr) = get_guest_options(network.clone());
     embed_methods_with_options(guest_pkg_to_options);
 
     // After the build is complete, copy the generated file to the elfs folder
-    copy_binary_to_elfs_folder(network);
+    copy_binary_to_elfs_folder(network, if_repr);
 }
 
-fn get_guest_options(network: String) -> HashMap<&'static str, risc0_build::GuestOptions> {
+fn get_guest_options(network: String) -> (HashMap<&'static str, risc0_build::GuestOptions>, bool) {
     let mut guest_pkg_to_options = HashMap::new();
 
-    let opts = if env::var("REPR_GUEST_BUILD").is_ok() {
+    let (opts, is_repr) = if env::var("REPR_GUEST_BUILD").is_ok()
+        && env::var("REPR_GUEST_BUILD").unwrap() == "1"
+    {
         let this_package_dir = env::var("CARGO_MANIFEST_DIR").expect("Failed to get manifest dir");
         let root_dir = format!("{this_package_dir}/../");
 
@@ -82,33 +84,46 @@ fn get_guest_options(network: String) -> HashMap<&'static str, risc0_build::Gues
             .build()
             .unwrap();
 
-        GuestOptionsBuilder::default()
-            // .features(features)
-            .use_docker(docker_opts)
-            .build()
-            .unwrap()
+        (
+            GuestOptionsBuilder::default()
+                // .features(features)
+                .use_docker(docker_opts)
+                .build()
+                .unwrap(),
+            true,
+        )
     } else {
         println!("cargo:warning=Guest code is not built in docker");
-        GuestOptionsBuilder::default()
-            // .features(features)
-            .build()
-            .unwrap()
+        (
+            GuestOptionsBuilder::default()
+                // .features(features)
+                .build()
+                .unwrap(),
+            false,
+        )
     };
 
     guest_pkg_to_options.insert("bitcoin-guest", opts);
-    guest_pkg_to_options
+    (guest_pkg_to_options, is_repr)
 }
 
-fn copy_binary_to_elfs_folder(network: String) {
+fn copy_binary_to_elfs_folder(network: String, is_repr: bool) {
     // Get manifest directory
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("Failed to get manifest dir");
     let base_dir = Path::new(&manifest_dir);
 
-    // Create elfs directory if it doesn't exist
-    let elfs_dir = base_dir.join("../elfs");
-    if !elfs_dir.exists() {
-        fs::create_dir_all(&elfs_dir).expect("Failed to create elfs directory");
-        println!("cargo:warning=Created elfs directory at {:?}", elfs_dir);
+    // Determine target directory based on is_repr flag
+    let target_dir_name = if is_repr { "../elfs" } else { "../test-elfs" };
+
+    // Create target directory if it doesn't exist
+    let target_dir = base_dir.join(target_dir_name);
+    if !target_dir.exists() {
+        fs::create_dir_all(&target_dir)
+            .expect(&format!("Failed to create {} directory", target_dir_name));
+        println!(
+            "cargo:warning=Created {} directory at {:?}",
+            target_dir_name, target_dir
+        );
     }
 
     // Build source path
@@ -123,7 +138,7 @@ fn copy_binary_to_elfs_folder(network: String) {
 
     // Build destination path with network prefix
     let dest_filename = format!("{}-bitcoin-guest.bin", network.to_lowercase());
-    let dest_path = elfs_dir.join(&dest_filename);
+    let dest_path = target_dir.join(&dest_filename);
 
     // Copy the file
     match fs::copy(&src_path, &dest_path) {

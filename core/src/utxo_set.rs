@@ -26,13 +26,10 @@ use bitcoin::{Amount, OutPoint, ScriptBuf, Txid};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::transaction::CircuitTransaction;
-use jmt::{
-    proof::{SparseMerkleProof, UpdateMerkleProof},
-    KeyHash, OwnedValue, RootHash, Version,
-};
+use jmt::{KeyHash, RootHash};
 
 /// Circuit-compatible UTXO set implementation
 ///
@@ -422,52 +419,14 @@ impl UTXOSetGuest {
     ///
     /// A new UTXOSetGuest instance with default values
     pub fn new() -> Self {
-        // println!("[DEBUG] Creating new UTXOSetGuest");
         let result = UTXOSetGuest {
             jmt_root: RootHash::from([
                 83, 80, 65, 82, 83, 69, 95, 77, 69, 82, 75, 76, 69, 95, 80, 76, 65, 67, 69, 72, 79,
                 76, 68, 69, 82, 95, 72, 65, 83, 72, 95, 95,
             ]), // Empty Merkle tree root
         };
-        // println!("[DEBUG] New UTXOSetGuest: {:?}", result);
         result
     }
-
-    /// Returns the current JMT root hash representing the UTXO set state
-    ///
-    /// The root hash is a cryptographic commitment to the entire UTXO set.
-    /// It can be used to verify the inclusion or non-inclusion of any UTXO
-    /// in the set using Sparse Merkle Tree proofs.
-    ///
-    /// # Returns
-    ///
-    /// The current Jellyfish Merkle Tree root hash
-    pub fn get_root(&self) -> RootHash {
-        // println!("[DEBUG] Getting JMT root");
-        let result = self.jmt_root;
-        // println!("[DEBUG] JMT Root: {:?}", result);
-        result
-    }
-
-    /// Removes and returns a UTXO from the cache
-    ///
-    /// This method removes a UTXO from the in-memory cache and returns it.
-    /// This is typically used when a UTXO is spent, allowing it to be
-    /// removed from the cache while still being accessible for further processing.
-    ///
-    /// # Arguments
-    ///
-    /// * `utxo_key` - The key (txid + vout) of the UTXO to remove
-    ///
-    /// # Returns
-    ///
-    /// The removed UTXO if it was in the cache, or None if not found
-    // pub fn pop_utxo_from_cache(&mut self, utxo_key: &KeyOutPoint) -> Option<UTXO> {
-    //     // println!("[DEBUG] Popping UTXO from cache");
-    //     let result = self.utxo_cache.remove(utxo_key);
-    //     // println!("[DEBUG] Popped UTXO: {:?}", result);
-    //     result
-    // }
 
     /// Add outputs from a transaction to the UTXO set
     pub fn add_transaction_outputs(
@@ -477,7 +436,6 @@ impl UTXOSetGuest {
         is_coinbase: bool,
         utxo_cache: &mut BTreeMap<KeyOutPoint, UTXO>,
     ) {
-        // println!("[DEBUG] Adding transaction outputs to UTXO cache");
         let txid = transaction.txid();
 
         for (vout, output) in transaction.output.iter().enumerate() {

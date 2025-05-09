@@ -487,7 +487,7 @@ impl BitcoinState {
         UTXOSetGuest::add_transaction_outputs(
             transaction,
             self.header_chain_state.block_height,
-            self.header_chain_state.block_time,
+            time_to_compare,
             is_coinbase,
             utxo_cache,
         );

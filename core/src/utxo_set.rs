@@ -370,36 +370,7 @@ impl UTXO {
             block_time,
             is_coinbase,
         };
-        // println!("[DEBUG] Deserialized UTXO: {:?}", result);
-        result
-    }
 
-    /// Checks if the UTXO is mature and can be spent
-    ///
-    /// In Bitcoin, coinbase outputs (mining rewards) have a special consensus rule:
-    /// they must have at least 100 confirmations before they can be spent. This
-    /// prevents miners from immediately spending rewards that might be invalidated
-    /// by a chain reorganization.
-    ///
-    /// # Arguments
-    ///
-    /// * `current_height` - The current blockchain height
-    ///
-    /// # Returns
-    ///
-    /// `true` if the UTXO can be spent, `false` otherwise
-    pub fn is_mature(&self, current_height: u32) -> bool {
-        // println!("[DEBUG] Checking if UTXO is mature");
-
-        // Non-coinbase outputs can be spent immediately
-        if !self.is_coinbase {
-            return true;
-        }
-
-        // Coinbase outputs require 100 confirmations before they can be spent
-        // Check if we have enough confirmations (current height - UTXO height >= 100)
-        let result = current_height >= self.block_height + 100;
-        // println!("[DEBUG] Is UTXO Mature: {}", result);
         result
     }
 }

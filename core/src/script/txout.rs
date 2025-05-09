@@ -1,27 +1,12 @@
 use bitcoin::{ScriptBuf, TxOut};
 
-// enum class TxoutType {
-//     NONSTANDARD,
-//     // 'standard' transaction types:
-//     ANCHOR, //!< anyone can spend script
-//     PUBKEY,
-//     PUBKEYHASH,
-//     SCRIPTHASH,
-//     MULTISIG,
-//     NULL_DATA, //!< unspendable OP_RETURN script that carries data
-//     WITNESS_V0_SCRIPTHASH,
-//     WITNESS_V0_KEYHASH,
-//     WITNESS_V1_TAPROOT,
-//     WITNESS_UNKNOWN, //!< Only for Witness versions not already defined above
-// };
-
 pub enum TxoutType {
     NonStandard,
     P2A,            // Pay-to-Anchor
     P2PK,           // Pay-to-Pubkey
     P2PKH,          // Pay-to-PubkeyHash
     P2SH,           // Pay-to-ScriptHash
-    MultiSig,       // MultiSig
+    MultiSig,       // Bare MultiSig
     NullData,       // Unspendable OP_RETURN script that carries data
     P2WSH,          // Pay-to-Witness-ScriptHash
     P2WPKH,         // Pay-to-Witness-PubkeyHash

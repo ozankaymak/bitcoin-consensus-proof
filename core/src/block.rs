@@ -4,14 +4,9 @@
 // This module provides a custom implementation of Bitcoin blocks for circuit-based processing.
 // It encapsulates the block structure and related functionality needed for consensus validation.
 
-use std::vec;
-
-use bitcoin::{
-    block::Bip34Error, blockdata::weight::WITNESS_SCALE_FACTOR, script, Amount, Block, VarInt,
-};
+use bitcoin::{blockdata::weight::WITNESS_SCALE_FACTOR, script, Amount, Block, VarInt};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
-use sha2::Digest;
 
 use crate::{
     bitcoin_merkle::BitcoinMerkleTree, constants::MAGIC_BYTES, hashes::calculate_double_sha256,
@@ -52,8 +47,6 @@ impl CircuitBlock {
     ///
     /// A new CircuitBlock instance
     pub fn from(block: Block) -> Self {
-        // println!("[DEBUG] Creating CircuitBlock from Block");
-
         // Convert the block header
         let block_header = CircuitBlockHeader::from(block.header);
 
@@ -70,7 +63,6 @@ impl CircuitBlock {
             transactions,
         };
 
-        // println!("[DEBUG] Resulting CircuitBlock: {:?}", result);
         result
     }
 
@@ -83,8 +75,6 @@ impl CircuitBlock {
     ///
     /// A standard bitcoin-rs Block
     pub fn into(self) -> Block {
-        // println!("[DEBUG] Converting CircuitBlock into Block");
-
         // Create a standard bitcoin-rs Block
         let result = Block {
             // Convert the header
@@ -98,40 +88,43 @@ impl CircuitBlock {
                 .collect(),
         };
 
-        // println!("[DEBUG] Resulting Block: {:?}", result);
         result
     }
 
     // Some simple checks
     pub fn check_block_simple(&self) {
         if self.is_empty() {
+            println!("Blockhash: {:?}", self.block_header.compute_block_hash());
             panic!("Block is empty");
         }
         if self.base_size() * WITNESS_SCALE_FACTOR > 4_000_000 {
+            println!("Blockhash: {:?}", self.block_header.compute_block_hash());
             panic!("Block base size is too large");
         }
         if self.total_size() > 4_000_000 {
+            println!("Blockhash: {:?}", self.block_header.compute_block_hash());
             panic!("Block total size is too large");
         }
         if self.weight() > 4_000_000 {
+            println!("Blockhash: {:?}", self.block_header.compute_block_hash());
             panic!("Block weight is too large");
         }
 
         // Only the first transaction can be a coinbase
         if !self.transactions[0].is_coinbase() {
+            println!("Txid: {:?}", self.transactions[0].txid());
             panic!("First transaction is not a coinbase");
         }
         // All other transactions must not be coinbase
         for tx in self.transactions.iter().skip(1) {
             if tx.is_coinbase() {
+                println!("Txid: {:?}", tx.txid());
                 panic!("Non-coinbase transaction is a coinbase");
             }
         }
     }
 
     pub fn verify_merkle_root(&self) {
-        // println!("[DEBUG] Verifying Merkle Root");
-
         // Calculate the Merkle root of the transactions
         let merkle_tree =
             BitcoinMerkleTree::new(self.transactions.iter().map(|tx| tx.txid()).collect());
@@ -205,8 +198,6 @@ impl CircuitBlock {
     }
 
     pub fn verify_witness_commitment(&self, is_bip141_active: bool) {
-        // println!("[DEBUG] Checking witness commitment");
-
         // Magic bytes prefix that identifies a witness commitment output
         const MAGIC: [u8; 6] = [0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
 
@@ -276,28 +267,20 @@ impl CircuitBlock {
     ///
     /// `true` if any transaction (except the coinbase) is SegWit, `false` otherwise
     pub fn is_segwit(&self) -> bool {
-        // println!("[DEBUG] Checking if block is SegWit");
-
         // A block is SegWit if any non-coinbase transaction uses SegWit
         // We start from index 1 to skip the coinbase transaction
-        let result = self.transactions[1..].iter().any(|tx| tx.is_segwit());
+        let result = self.transactions[1..].iter().any(|tx| tx.is_segwit()); // Should not err
 
-        // println!("[DEBUG] Is SegWit: {}", result);
         result
     }
 
     pub fn is_empty(&self) -> bool {
-        // println!("[DEBUG] Checking if block is empty");
-
         let result = self.transactions.is_empty();
 
-        // println!("[DEBUG] Is Empty: {}", result);
         result
     }
 
     fn base_size(&self) -> usize {
-        // println!("[DEBUG] Calculating base size of block");
-
         // Start with the fixed block header size
         let mut size = 80; // Block header size is always 80 bytes
 
@@ -312,13 +295,10 @@ impl CircuitBlock {
             .sum::<usize>();
 
         let result = size;
-        // println!("[DEBUG] Base Size: {}", result);
         result
     }
 
     pub fn total_size(&self) -> usize {
-        // println!("[DEBUG] Calculating total size of block");
-
         // Start with the fixed block header size
         let mut size = 80; // Block header size
 
@@ -333,24 +313,18 @@ impl CircuitBlock {
             .sum::<usize>();
 
         let result = size;
-        // println!("[DEBUG] Total Size: {}", result);
         result
     }
 
     pub fn weight(&self) -> u64 {
-        // println!("[DEBUG] Calculating weight of block");
-
         // Calculate weight according to BIP-141 formula:
         // weight = (base size * 3) + total size
         let result = (self.base_size() * 3 + self.total_size()) as u64;
 
-        // println!("[DEBUG] Weight: {}", result);
         result
     }
 
     pub fn get_claimed_block_reward(&self) -> Amount {
-        // println!("[DEBUG] Calculating claimed block reward");
-
         // Get the coinbase transaction (first transaction)
         let coinbase_tx = &self.transactions[0]; // Should not err
 
@@ -363,7 +337,6 @@ impl CircuitBlock {
         }
 
         let result = reward;
-        // println!("[DEBUG] Claimed Block Reward: {}", result);
         result
     }
 
@@ -383,8 +356,6 @@ impl CircuitBlock {
     /// - No witness commitment is found
     /// - The witness commitment format is invalid
     pub fn get_witness_commitment_hash(&self) -> [u8; 32] {
-        // println!("[DEBUG] Getting witness commitment hash");
-
         // Get the coinbase transaction
         let coinbase_tx = &self.transactions[0];
 
@@ -413,12 +384,10 @@ impl CircuitBlock {
 
                 // Extract the 32-byte commitment hash
                 let result = output.script_pubkey.as_bytes()[6..38].try_into().unwrap();
-                // println!("[DEBUG] Witness Commitment Hash: {:?}", result);
                 return result;
             }
         }
 
-        // TODO: Some blocks do not have a witness commitment hash, so this should be handled more gracefully
         panic!("No witness commitment hash found in coinbase transaction");
     }
 }

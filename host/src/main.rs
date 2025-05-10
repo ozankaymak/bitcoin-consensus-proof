@@ -517,6 +517,7 @@ mod tests {
     use bitcoin_consensus_core::{
         bitcoin_consensus_circuit,
         block::CircuitBlock,
+        softfork_manager::BIPFlags,
         utxo_set::{KeyOutPoint, UTXO},
         zkvm::ZKProof,
         BitcoinConsensusCircuitData, BitcoinConsensusCircuitInput, BitcoinConsensusCircuitOutput,
@@ -585,6 +586,8 @@ mod tests {
             journal: vec![],
         };
 
+        let mut prev_11_blocks_time: [u32; 11] = [0; 11];
+
         // Process batches
         for batch_num in 1..=num_batches {
             info!("==================================================");
@@ -599,13 +602,30 @@ mod tests {
 
             // Process blocks in this batch
             for i in current_height..current_height + batch_size as u32 {
+                let bip_flags = BIPFlags::at_height(i);
                 let block_path = format!("../data/blocks/{network}-blocks/{network}_block_{i}.bin");
                 info!("Reading block from: {}", block_path);
+                let mut prev_block_mtp_vec = prev_11_blocks_time.clone();
+                prev_block_mtp_vec.sort_by(|a, b| a.cmp(b));
 
                 // Parse the block from file (must exist for real test)
                 let block = parse_block_from_file(&block_path)?;
                 let circuit_block = CircuitBlock::from(block.clone());
                 blocks.push(circuit_block.clone());
+
+                let prev_block_mtp = if bip_flags.is_bip113_active() {
+                    // println!("BIP113 active - using median time past");
+                    // println!(
+                    //     "Previous 11 blocks time: {:?}",
+                    //     prev_block_mtp_vec
+                    // );
+                    prev_block_mtp_vec[5]
+                } else {
+                    // println!("BIP113 inactive - using block time");
+                    block.header.time
+                };
+
+                prev_11_blocks_time[i as usize % 11] = block.header.time;
 
                 // Process transactions for this block - follow the same logic as in the main code
                 for (tx_index, tx) in block.txdata.iter().enumerate() {
@@ -687,7 +707,7 @@ mod tests {
                             script_pubkey: output.script_pubkey.as_bytes().to_vec(),
                             block_height: current_height,
                             is_coinbase,
-                            block_time: block.header.time,
+                            block_time: prev_block_mtp,
                         };
 
                         // Add to our batch cache

@@ -249,24 +249,11 @@ impl BitcoinState {
     pub fn verify_and_apply_blocks(&mut self, input: &mut BitcoinConsensusCircuitData) {
         let mut utxo_cache: BTreeMap<KeyOutPoint, UTXO> = BTreeMap::new();
 
-        for (block_idx, block) in input.blocks.iter().enumerate() {
-            // println!(
-            //     "[INFO] Processing block {}/{} - Height: {}, Hash: {:?}, Transactions: {}",
-            //     block_idx + 1,
-            //     num_blocks,
-            //     self.header_chain_state.block_height + 1,
-            //     block.block_header.compute_block_hash(),
-            //     block.transactions.len()
-            // );
-
+        for block in input.blocks.iter() {
             // Before validating header, know which BIP flags are active in the next block
             let expected_next_height = self.header_chain_state.block_height.wrapping_add(1);
-            // println!(
-            //     "[INFO] Expected next block height: {}",
-            //     expected_next_height
-            // );
+
             let bip_flags = softfork_manager::BIPFlags::at_height(expected_next_height);
-            // println!("[INFO] BIP flags: {:?}", bip_flags);
 
             let time_to_compare_against = if bip_flags.is_bip113_active() {
                 self.header_chain_state.get_median_time_past()

@@ -221,7 +221,7 @@ impl CircuitBlock {
         // Get the coinbase transaction
         let coinbase = &self.transactions[0];
 
-        let mut witness_commitment = [0u8; 32];
+        let witness_commitment: [u8; 32];
 
         // Find the commitment output - it's the last output that starts with the magic bytes, and it should be at least 38 bytes long.
         // Extract the 32-byte commitment hash from the output script

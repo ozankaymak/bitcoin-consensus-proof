@@ -7,7 +7,6 @@ pub mod utils;
 extern crate alloc;
 extern crate core;
 
-use alloc::borrow::Cow;
 use core::cmp;
 use utils::ConditionStack;
 
@@ -16,7 +15,7 @@ use bitcoin::hashes::{hash160, ripemd160, sha1, sha256, sha256d, Hash};
 use bitcoin::opcodes::{all::*, Opcode};
 use bitcoin::script::{self, Instruction, Instructions, Script, ScriptBuf};
 use bitcoin::sighash::SighashCache;
-use bitcoin::taproot::{self, TapLeafHash};
+use bitcoin::taproot::TapLeafHash;
 use bitcoin::transaction::{self, Transaction, TxOut};
 
 pub use error::{Error, ExecError};

@@ -324,8 +324,6 @@ impl CircuitTransaction {
         is_bip68_active: bool,
         prevouts: &Vec<UTXO>,
     ) -> (u32, u32) {
-        // println!("[DEBUG] Calculating sequence locks");
-
         // Ensure we have height information for each input
         assert_eq!(prevouts.len(), self.0.input.len());
 
@@ -366,10 +364,6 @@ impl CircuitTransaction {
                 // The 16-bit mask is shifted by the granularity (9 bits = 512 seconds)
                 let sequence_locked_seconds =
                     (txin.sequence.0 & SEQUENCE_LOCKTIME_MASK) << SEQUENCE_LOCKTIME_GRANULARITY;
-                println!(
-                    "[DEBUG] Sequence locked seconds: {}",
-                    sequence_locked_seconds
-                );
 
                 // Relative timelock must exist and it should be in seconds
                 // let time_lock_seconds = time_lock.expect("Time lock should be in seconds");
@@ -418,8 +412,6 @@ impl CircuitTransaction {
         median_time_past: u32,
         lock_pair: (u32, u32),
     ) -> bool {
-        // println!("[DEBUG] Evaluating sequence locks");
-
         // Get current block time (median time past)
         // let block_time = get_median_time_past(block);
 
@@ -432,7 +424,6 @@ impl CircuitTransaction {
 
         // All sequence locks are satisfied
         let result = true;
-        // println!("[DEBUG] Sequence Locks Satisfied: {}", result);
         result
     }
 
@@ -459,8 +450,6 @@ impl CircuitTransaction {
         median_time_past: u32,
         block_height: u32,
     ) {
-        // println!("[DEBUG] Checking sequence locks");
-
         // First, calculate the sequence locks
         let lock_pair = self.calculate_sequence_locks(is_bip68_active, prevouts);
 

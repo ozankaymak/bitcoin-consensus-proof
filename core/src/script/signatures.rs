@@ -1,9 +1,8 @@
 use bitcoin::opcodes::OP_0;
 use bitcoin::secp256k1::{self};
-use bitcoin::sighash::{Annex, EcdsaSighashType, Prevouts, TapSighashType};
-use bitcoin::{PubkeyHash, Script};
+use bitcoin::sighash::{EcdsaSighashType, Prevouts, TapSighashType};
+use bitcoin::Script;
 use k256::ecdsa::signature::hazmat::PrehashVerifier;
-use secp256k1::PublicKey;
 
 use crate::script::ExecError;
 use crate::*;

@@ -9,8 +9,11 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bitcoin_merkle::BitcoinMerkleTree, constants::MAGIC_BYTES, hashes::calculate_double_sha256,
-    header_chain::CircuitBlockHeader, transaction::CircuitTransaction,
+    bitcoin_merkle::BitcoinMerkleTree,
+    constants::{MAGIC_BYTES, MAX_BLOCK_WEIGHT},
+    hashes::calculate_double_sha256,
+    header_chain::CircuitBlockHeader,
+    transaction::CircuitTransaction,
 };
 
 /// Represents a Bitcoin block optimized for circuit processing
@@ -97,15 +100,15 @@ impl CircuitBlock {
             println!("Blockhash: {:?}", self.block_header.compute_block_hash());
             panic!("Block is empty");
         }
-        if self.base_size() * WITNESS_SCALE_FACTOR > 4_000_000 {
+        if self.base_size() * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT {
             println!("Blockhash: {:?}", self.block_header.compute_block_hash());
             panic!("Block base size is too large");
         }
-        if self.total_size() > 4_000_000 {
+        if self.total_size() > MAX_BLOCK_WEIGHT {
             println!("Blockhash: {:?}", self.block_header.compute_block_hash());
             panic!("Block total size is too large");
         }
-        if self.weight() > 4_000_000 {
+        if self.weight() > MAX_BLOCK_WEIGHT {
             println!("Blockhash: {:?}", self.block_header.compute_block_hash());
             panic!("Block weight is too large");
         }
@@ -198,9 +201,6 @@ impl CircuitBlock {
     }
 
     pub fn verify_witness_commitment(&self, is_bip141_active: bool) {
-        // Magic bytes prefix that identifies a witness commitment output
-        const MAGIC: [u8; 6] = [0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
-
         // Witness commitment is optional if there are no transactions using SegWit in the block.
         if !self.is_segwit() {
             return;
@@ -225,11 +225,9 @@ impl CircuitBlock {
 
         // Find the commitment output - it's the last output that starts with the magic bytes, and it should be at least 38 bytes long.
         // Extract the 32-byte commitment hash from the output script
-        if let Some(pos) = coinbase
-            .output
-            .iter()
-            .rposition(|o| o.script_pubkey.len() >= 38 && o.script_pubkey.as_bytes()[0..6] == MAGIC)
-        {
+        if let Some(pos) = coinbase.output.iter().rposition(|o| {
+            o.script_pubkey.len() >= 38 && o.script_pubkey.as_bytes()[0..6] == MAGIC_BYTES
+        }) {
             // Extract the 32-byte commitment hash from the output script
             witness_commitment = coinbase.output[pos].script_pubkey.as_bytes()[6..38]
                 .try_into()
@@ -316,10 +314,10 @@ impl CircuitBlock {
         result
     }
 
-    pub fn weight(&self) -> u64 {
+    pub fn weight(&self) -> usize {
         // Calculate weight according to BIP-141 formula:
         // weight = (base size * 3) + total size
-        let result = (self.base_size() * 3 + self.total_size()) as u64;
+        let result = self.base_size() * 3 + self.total_size();
 
         result
     }
@@ -339,55 +337,31 @@ impl CircuitBlock {
         let result = reward;
         result
     }
+}
 
-    /// Extracts the witness commitment hash from the coinbase transaction
-    ///
-    /// In SegWit blocks, the coinbase must contain an output with an OP_RETURN
-    /// followed by the witness commitment hash. This method extracts that hash.
-    ///
-    /// # Returns
-    ///
-    /// The 32-byte witness commitment hash
-    ///
-    /// # Panics
-    ///
-    /// Panics if:
-    /// - The first transaction is not a coinbase
-    /// - No witness commitment is found
-    /// - The witness commitment format is invalid
-    pub fn get_witness_commitment_hash(&self) -> [u8; 32] {
-        // Get the coinbase transaction
-        let coinbase_tx = &self.transactions[0];
+#[cfg(test)]
+mod tests {
+    use bitcoin::Block;
 
-        // Verify this is really a coinbase transaction
-        if !coinbase_tx.is_coinbase() {
-            panic!("Only coinbase transactions can have a witness commitment hash");
-        }
+    use super::CircuitBlock;
 
-        // Look for an OP_RETURN output containing the witness commitment
-        for output in coinbase_tx.output.iter() {
-            if output.script_pubkey.is_op_return() {
-                // The output script must be at least 38 bytes:
-                // - 2 bytes for OP_RETURN and push
-                // - 4 bytes for magic bytes
-                // - 32 bytes for the commitment hash
-                if output.script_pubkey.len() < 38 {
-                    panic!("Witness commitment hash is too short");
-                }
+    #[test]
+    fn test_coinbase_tx_simple() {
+        let block: Block = bitcoin::consensus::deserialize(&hex::decode("000000207663d3bb84157a1cbee9ad4d01c70230684325785ff32a26f6fde51e000000009db28139792c252ac89807ba837cb9056edb3f9af877d547e8925274e2b3984327e53866ffff001d64a2ce0c01010000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff0a028c00062f4077697a2fffffffff0200f2052a01000000160014a54e2a1ec06389203887661535ed118b7d0538890000000000000000266a24aa21a9ede2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf90120000000000000000000000000000000000000000000000000000000000000000000000000").unwrap()).unwrap();
+        let circuit_block = CircuitBlock::from(block);
+        circuit_block.check_block_simple();
+        circuit_block.verify_merkle_root();
+        circuit_block.verify_bip34_block_height(true, 140);
+    }
 
-                // Verify the magic bytes prefix
-                assert_eq!(
-                    MAGIC_BYTES,
-                    output.script_pubkey.as_bytes()[2..6],
-                    "Invalid magic bytes (witness commitment prefix)"
-                );
-
-                // Extract the 32-byte commitment hash
-                let result = output.script_pubkey.as_bytes()[6..38].try_into().unwrap();
-                return result;
-            }
-        }
-
-        panic!("No witness commitment hash found in coinbase transaction");
+    #[test]
+    fn test_coinbase_tx_large() {
+        let block_bytes: &[u8] =
+            include_bytes!("../../data/blocks/testnet4-blocks/testnet4_block_81672.bin");
+        let block: Block = bitcoin::consensus::deserialize(block_bytes).unwrap();
+        let circuit_block = CircuitBlock::from(block);
+        circuit_block.check_block_simple();
+        circuit_block.verify_merkle_root();
+        circuit_block.verify_bip34_block_height(true, 81672);
     }
 }

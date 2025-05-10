@@ -7,12 +7,12 @@ use bitcoin_consensus_core::{
     UTXOInsertionUpdateProof,
 };
 use jmt::{proof::UpdateMerkleProof, KeyHash, RootHash, ValueHash};
-use jmt_host::rocks_db::RocksDbStorage;
+use rocks_db::RocksDbStorage;
 use sha2::Sha256;
 use tracing::{info, warn};
 
-pub mod jmt_host;
 pub mod mock_host;
+pub mod rocks_db;
 
 // Parse a block from a binary file
 pub fn parse_block_from_file(file_path: &str) -> Result<Block, anyhow::Error> {

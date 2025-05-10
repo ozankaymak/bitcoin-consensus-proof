@@ -169,7 +169,6 @@ impl UTXO {
         block_time: u32,
         is_coinbase: bool,
     ) -> Self {
-        // println!("[DEBUG] Creating UTXO from TxOut");
         let result = UTXO {
             value: Amount::to_sat(txout.value),
             block_height,
@@ -177,7 +176,6 @@ impl UTXO {
             is_coinbase,
             script_pubkey: txout.script_pubkey.to_bytes().to_vec(),
         };
-        // println!("[DEBUG] Resulting UTXO: {:?}", result);
         result
     }
 
@@ -192,12 +190,10 @@ impl UTXO {
     ///
     /// A bitcoin-rs TxOut with the same value and script as this UTXO
     pub fn into_txout(&self) -> bitcoin::TxOut {
-        // println!("[DEBUG] Converting UTXO into TxOut");
         let result = bitcoin::TxOut {
             value: Amount::from_sat(self.value),
             script_pubkey: ScriptBuf::from_bytes(self.script_pubkey.clone()),
         };
-        // println!("[DEBUG] Resulting TxOut: {:?}", result);
         result
     }
 }
@@ -307,9 +303,6 @@ impl UTXO {
     ///
     /// A vector of bytes containing the serialized UTXO
     pub fn to_bytes(&self) -> Vec<u8> {
-        // println!("[DEBUG] Serializing UTXO to bytes");
-        // println!("[DEBUG] UTXO: {:?}", self);
-        // Pre-allocate capacity for efficiency
         let mut bytes = Vec::with_capacity(8 + 4 + 4 + 1 + self.script_pubkey.len());
 
         // Append value (8 bytes)
@@ -328,7 +321,6 @@ impl UTXO {
         bytes.extend_from_slice(&self.script_pubkey);
 
         let result = bytes;
-        // println!("[DEBUG] Serialized UTXO Bytes: {:?}", result);
         result
     }
 
@@ -346,8 +338,6 @@ impl UTXO {
     ///
     /// A reconstructed UTXO
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        // println!("[DEBUG] Deserializing UTXO from bytes");
-
         // Extract value (first 8 bytes)
         let value = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
 

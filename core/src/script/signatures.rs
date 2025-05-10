@@ -159,10 +159,6 @@ impl Exec {
             unreachable!();
         };
 
-        // println!("sighash: {:?}", sighash);
-        // println!("sig: {:?}", sig);
-        // println!("pk: {:?}", pk);
-
         if pk.verify_prehash(&sighash, &sig).is_err() {
             return Err(ExecError::SchnorrSig);
         }

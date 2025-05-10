@@ -4,6 +4,7 @@ use anyhow::Result;
 use bitcoin::hashes::Hash;
 use bitcoin_consensus_core::{
     block::CircuitBlock,
+    softfork_manager::BIPFlags,
     utxo_set::{KeyOutPoint, UTXO},
     BitcoinConsensusCircuitData, BitcoinConsensusCircuitInput, BitcoinConsensusCircuitOutput,
     BitcoinConsensusPrevProofType, UTXODeletionUpdateProof, UTXOInsertionUpdateProof,
@@ -99,6 +100,9 @@ fn main() -> Result<(), anyhow::Error> {
     // Initialize previous proof path
     let mut current_proof_path = String::from(input_proof);
 
+    // Initialize the array to track previous 11 block times for median time past calculation
+    let mut prev_11_blocks_time: [u32; 11] = [0; 11];
+
     // Main batch loop
     for batch_num in 1..=num_batches {
         info!("==================================================");
@@ -150,6 +154,7 @@ fn main() -> Result<(), anyhow::Error> {
             &output_file_path,
             batch_size,
             bitcoin_guest_id,
+            &mut prev_11_blocks_time,
         )?;
 
         // Update for next iteration
@@ -184,6 +189,7 @@ fn process_batch(
     output_file_path: &str,
     batch_size: usize,
     bitcoin_guest_id: [u32; 8],
+    prev_11_blocks_time: &mut [u32; 11],
 ) -> Result<BatchResult, anyhow::Error> {
     // Set the previous proof type based on input_proof argument
     let prev_receipt = if input_proof.to_lowercase() == "none" {
@@ -208,7 +214,7 @@ fn process_batch(
     let mut blocks = Vec::new();
     let storage = RocksDbStorage::new(DB_PATH)?;
     // Inspect database
-    storage.inspect_all()?;
+    // storage.inspect_all()?;
 
     // JMT root hash for the UTXO set on the host side
     let mut current_root = storage.get_latest_root()?.unwrap_or_else(|| {
@@ -249,8 +255,11 @@ fn process_batch(
         std::collections::BTreeMap::new();
     let mut tx_proofs: VecDeque<UTXODeletionUpdateProof> = VecDeque::new();
 
+    // prev_11_blocks_time is now passed as a parameter
+
     // Process blocks and track UTXO changes
     for i in start..start + batch_size {
+        // We use the block height for the version of jmt to isolate the version
         warn!(
             "Processing block {} ({} of {})",
             i,
@@ -260,6 +269,29 @@ fn process_batch(
         let block_path = format!("data/blocks/{NETWORK}-blocks/{NETWORK}_block_{i}.bin");
         info!("  Reading block from: {}", block_path);
         let block = parse_block_from_file(&block_path)?;
+
+        // Get BIP flags to determine if BIP113 is active
+        let bip_flags = BIPFlags::at_height(i as u32);
+
+        // Sort previous block times to calculate median time past
+        let mut prev_block_mtp_vec = prev_11_blocks_time.clone();
+        prev_block_mtp_vec.sort_by(|a, b| a.cmp(b));
+
+        // Determine block time to use based on BIP113 activation
+        let prev_block_mtp = if bip_flags.is_bip113_active() {
+            info!("  BIP113 active - using median time past for block {}", i);
+            prev_block_mtp_vec[5] // Median of the 11 previous blocks
+        } else {
+            info!(
+                "  BIP113 inactive - using current block time for block {}",
+                i
+            );
+            block.header.time
+        };
+
+        // Update our sliding window of previous block times
+        prev_11_blocks_time[i % 11] = block.header.time;
+
         let circuit_block = CircuitBlock::from(block.clone());
         blocks.push(circuit_block.clone());
 
@@ -275,7 +307,6 @@ fn process_batch(
             for (input_index, input) in tx.input.iter().enumerate() {
                 if input.previous_output.txid.to_byte_array() == [0; 32] {
                     warn!("    Skipping coinbase input {}", input_index);
-                    // tx_proofs.push(None);
                     continue;
                 }
 
@@ -299,7 +330,6 @@ fn process_batch(
                         utxo_key.txid, utxo_key.vout
                     );
                     batch_created_utxos.remove(&utxo_key);
-                    // tx_proofs.push(None);
                 } else {
                     // Generate inclusion proof for pre-existing UTXO
                     info!(
@@ -357,7 +387,7 @@ fn process_batch(
                     script_pubkey: output.script_pubkey.as_bytes().to_vec(),
                     block_height: current_height,
                     is_coinbase,
-                    block_time: block.header.time,
+                    block_time: prev_block_mtp, // Use the MTP or current block time based on BIP113
                 };
 
                 // Add to our batch cache
@@ -406,7 +436,7 @@ fn process_batch(
         input_data,
     };
 
-    storage.inspect_all()?;
+    // storage.inspect_all()?;
 
     // Build ENV
     info!("Building executor environment");

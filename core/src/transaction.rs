@@ -19,18 +19,12 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
 
-use crate::constants::{LOCKTIME_THRESHOLD, SEGWIT_FLAG, SEGWIT_MARKER};
+use crate::constants::{
+    LOCKTIME_THRESHOLD, SEGWIT_FLAG, SEGWIT_MARKER, SEQUENCE_LOCKTIME_GRANULARITY,
+    SEQUENCE_LOCKTIME_MASK,
+};
 use crate::hashes::calculate_double_sha256;
 use crate::utxo_set::UTXO;
-
-// Constants for BIP-68 (Relative timelock)
-// These constants are used to decode and interpret the sequence field in transaction inputs
-
-/// Granularity for time-based relative timelocks (2^9 = 512 seconds, approx. 9 minutes)
-const SEQUENCE_LOCKTIME_GRANULARITY: u8 = 9;
-
-/// Mask to extract the actual locktime value from a sequence number
-const SEQUENCE_LOCKTIME_MASK: u32 = 0x0000FFFF;
 
 /// A wrapper around the bitcoin-rs Transaction type optimized for circuit processing
 ///
@@ -59,9 +53,7 @@ impl CircuitTransaction {
     ///
     /// A new CircuitTransaction instance
     pub fn from(transaction: Transaction) -> Self {
-        // println!("[DEBUG] Creating CircuitTransaction from Transaction");
         let result = Self(transaction);
-        // println!("[DEBUG] Resulting CircuitTransaction: {:?}", result);
         result
     }
 
@@ -74,9 +66,7 @@ impl CircuitTransaction {
     ///
     /// A reference to the inner Transaction
     pub fn inner(&self) -> &Transaction {
-        // println!("[DEBUG] Accessing inner Transaction");
         let result = &self.0;
-        // println!("[DEBUG] Inner Transaction: {:?}", result);
         result
     }
 
@@ -94,8 +84,6 @@ impl CircuitTransaction {
     ///
     /// A 32-byte array containing the transaction ID
     pub fn txid(&self) -> [u8; 32] {
-        // println!("[DEBUG] Calculating transaction ID");
-
         // Create a buffer for the serialized transaction
         let mut tx_bytes_vec = vec![];
 
@@ -126,7 +114,6 @@ impl CircuitTransaction {
         // Calculate double SHA-256 of the serialized transaction
         let result = calculate_double_sha256(&tx_bytes_vec);
 
-        // println!("[DEBUG] Transaction ID: {:?}", result);
         result
     }
 
@@ -145,8 +132,6 @@ impl CircuitTransaction {
     ///
     /// A 32-byte array containing the witness transaction ID
     pub fn wtxid(&self) -> [u8; 32] {
-        // println!("[DEBUG] Calculating witness transaction ID");
-
         // Special case: coinbase transaction's wtxid is defined as all zeros
         if self.is_coinbase() {
             return [0; 32];
@@ -192,12 +177,9 @@ impl CircuitTransaction {
             .consensus_encode(&mut tx_bytes_vec)
             .unwrap();
 
-        // println!("{:?}", tx_bytes_vec);
-
         // Calculate double SHA-256 of the serialized transaction
         let result = calculate_double_sha256(&tx_bytes_vec);
 
-        // println!("[DEBUG] Witness Transaction ID: {:?}", result);
         result
     }
 
@@ -211,8 +193,6 @@ impl CircuitTransaction {
     ///
     /// `true` if any input has witness data, `false` otherwise
     pub fn is_segwit(&self) -> bool {
-        // println!("[DEBUG] Checking if transaction is SegWit");
-
         // A transaction is SegWit if any input has a non-empty witness
         let result = self
             .inner()
@@ -220,7 +200,6 @@ impl CircuitTransaction {
             .iter()
             .any(|input| !input.witness.is_empty());
 
-        // println!("[DEBUG] Is SegWit: {}", result);
         result
     }
 
@@ -277,8 +256,6 @@ impl CircuitTransaction {
 
     /// Does not include both block_time and median_time_past as which one will be used is already checked
     pub fn verify_final_tx(&self, time_to_compare: u32, block_height: u32) {
-        // println!("[DEBUG] Checking if transaction is final");
-
         let lock_time = self.0.lock_time.to_consensus_u32();
 
         if lock_time == 0 {
@@ -356,8 +333,6 @@ impl CircuitTransaction {
             let coin_height = prevouts[txin_index].block_height;
             let coin_time = prevouts[txin_index].block_time;
 
-            // let time_lock = txin.sequence.to_relative_lock_time();
-
             // Check if this is a time-based relative lock time (bit 22 set)
             if txin.sequence.is_time_locked() {
                 // Calculate the lock time in seconds
@@ -389,7 +364,6 @@ impl CircuitTransaction {
         }
 
         let result = (min_height, min_time);
-        // println!("[DEBUG] Sequence Locks: {:?}", result);
         result
     }
 
@@ -747,13 +721,6 @@ mod tests {
 
     use super::*;
 
-    /// Tests the transaction ID calculation for a legacy transaction
-    ///
-    /// This test verifies that our implementation correctly calculates the txid
-    /// for a real, non-SegWit transaction from the Bitcoin blockchain.
-    /// The test compares our result with the known expected transaction ID.
-    /// Note: Bitcoin transaction IDs are typically displayed in little-endian format,
-    /// so we reverse our big-endian result for the comparison.
     #[test]
     fn test_txid_legacy() {
         let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("0100000001c997a5e56e104102fa209c6a852dd90660a20b2d9c352423edce25857fcd3704000000004847304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901ffffffff0200ca9a3b00000000434104ae1a62fe09c5f51b13905f07f06b99a2f7159b2225f374cd378d71302fa28414e7aab37397f554a7df5f142c21c1b7303b8a0626f1baded5c72a704f7e6cd84cac00286bee0000000043410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac00000000").unwrap()).unwrap());

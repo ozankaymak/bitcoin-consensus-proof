@@ -10,6 +10,7 @@
 // https://github.com/chainwayxyz/citrea/blob/0acb887b1a766fac1a482a68c6d51ecf9661f538/crates/bitcoin-da/src/spec/transaction.rs
 
 use bitcoin::absolute::LockTime;
+use bitcoin::blockdata::weight::WITNESS_SCALE_FACTOR;
 use bitcoin::consensus::Encodable;
 use bitcoin::hashes::Hash;
 use bitcoin::transaction::Version;
@@ -18,27 +19,12 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut};
 
-use crate::constants::{LOCKTIME_THRESHOLD, SEGWIT_FLAG, SEGWIT_MARKER};
+use crate::constants::{
+    LOCKTIME_THRESHOLD, SEGWIT_FLAG, SEGWIT_MARKER, SEQUENCE_LOCKTIME_GRANULARITY,
+    SEQUENCE_LOCKTIME_MASK,
+};
 use crate::hashes::calculate_double_sha256;
-use crate::header_chain::CircuitBlockHeader;
-
-// Constants for BIP-68 (Relative timelock)
-// These constants are used to decode and interpret the sequence field in transaction inputs
-
-/// Flag to indicate that sequence numbers should be validated as relative timelocks
-const LOCKTIME_VERIFY_SEQUENCE: u32 = 0x00000080;
-
-/// Granularity for time-based relative timelocks (2^9 = 512 seconds, approx. 9 minutes)
-const SEQUENCE_LOCKTIME_GRANULARITY: u8 = 9;
-
-/// Flag that indicates a sequence number should not be interpreted as a relative timelock
-const SEQUENCE_LOCKTIME_DISABLED: u32 = 0x80000000;
-
-/// Flag to indicate whether the sequence number encodes a block height (0) or time (1)
-const SEQUENCE_LOCKTIME_TYPE_FLAG: u32 = 0x00400000;
-
-/// Mask to extract the actual locktime value from a sequence number
-const SEQUENCE_LOCKTIME_MASK: u32 = 0x0000FFFF;
+use crate::utxo_set::UTXO;
 
 /// A wrapper around the bitcoin-rs Transaction type optimized for circuit processing
 ///
@@ -67,9 +53,7 @@ impl CircuitTransaction {
     ///
     /// A new CircuitTransaction instance
     pub fn from(transaction: Transaction) -> Self {
-        // println!("[DEBUG] Creating CircuitTransaction from Transaction");
         let result = Self(transaction);
-        // println!("[DEBUG] Resulting CircuitTransaction: {:?}", result);
         result
     }
 
@@ -82,9 +66,7 @@ impl CircuitTransaction {
     ///
     /// A reference to the inner Transaction
     pub fn inner(&self) -> &Transaction {
-        // println!("[DEBUG] Accessing inner Transaction");
         let result = &self.0;
-        // println!("[DEBUG] Inner Transaction: {:?}", result);
         result
     }
 
@@ -102,8 +84,6 @@ impl CircuitTransaction {
     ///
     /// A 32-byte array containing the transaction ID
     pub fn txid(&self) -> [u8; 32] {
-        // println!("[DEBUG] Calculating transaction ID");
-
         // Create a buffer for the serialized transaction
         let mut tx_bytes_vec = vec![];
 
@@ -134,7 +114,6 @@ impl CircuitTransaction {
         // Calculate double SHA-256 of the serialized transaction
         let result = calculate_double_sha256(&tx_bytes_vec);
 
-        // println!("[DEBUG] Transaction ID: {:?}", result);
         result
     }
 
@@ -153,8 +132,6 @@ impl CircuitTransaction {
     ///
     /// A 32-byte array containing the witness transaction ID
     pub fn wtxid(&self) -> [u8; 32] {
-        // println!("[DEBUG] Calculating witness transaction ID");
-
         // Special case: coinbase transaction's wtxid is defined as all zeros
         if self.is_coinbase() {
             return [0; 32];
@@ -200,12 +177,9 @@ impl CircuitTransaction {
             .consensus_encode(&mut tx_bytes_vec)
             .unwrap();
 
-        // println!("{:?}", tx_bytes_vec);
-
         // Calculate double SHA-256 of the serialized transaction
         let result = calculate_double_sha256(&tx_bytes_vec);
 
-        // println!("[DEBUG] Witness Transaction ID: {:?}", result);
         result
     }
 
@@ -219,8 +193,6 @@ impl CircuitTransaction {
     ///
     /// `true` if any input has witness data, `false` otherwise
     pub fn is_segwit(&self) -> bool {
-        // println!("[DEBUG] Checking if transaction is SegWit");
-
         // A transaction is SegWit if any input has a non-empty witness
         let result = self
             .inner()
@@ -228,62 +200,79 @@ impl CircuitTransaction {
             .iter()
             .any(|input| !input.witness.is_empty());
 
-        // println!("[DEBUG] Is SegWit: {}", result);
         result
     }
 
-    /// Determines if the transaction is final according to Bitcoin consensus rules
-    ///
-    /// A transaction is considered final if:
-    /// 1. Its locktime is 0, OR
-    /// 2. The locktime is less than the block height/time and is satisfied, OR
-    /// 3. All inputs have SEQUENCE_FINAL values (0xFFFFFFFF)
-    ///
-    /// This implements Bitcoin Core's IsFinalTx logic, which is used to determine
-    /// if a transaction can be included in a block.
-    ///
-    /// # Arguments
-    ///
-    /// * `block_height` - The height of the block containing this transaction
-    /// * `block_time` - The timestamp of the block containing this transaction
-    ///
-    /// # Returns
-    ///
-    /// `true` if the transaction is final, `false` otherwise
-    pub fn is_final_tx(&self, block_height: i32, block_time: i64) -> bool {
-        // println!("[DEBUG] Checking if transaction is final");
-
-        // Case 1: If nLockTime is 0, transaction is always final
-        if self.0.lock_time.to_consensus_u32() == 0 {
-            return true;
+    pub fn check_tx_simple(&self) {
+        // Check if inputs are empty
+        if self.inner().input.is_empty() {
+            panic!("[ERROR] Transaction has no inputs");
+        }
+        // Check if outputs are empty
+        if self.inner().output.is_empty() {
+            panic!("[ERROR] Transaction has no outputs");
+        }
+        // Tx with no witness size check
+        if self.base_size() * WITNESS_SCALE_FACTOR > 4_000_000 {
+            panic!("[ERROR] Size of transaction without witness is too large");
         }
 
-        // Get lock time as both u32 and i64 for comparison
-        let lock_time_u32 = self.0.lock_time.to_consensus_u32();
-        let lock_time_i64 = lock_time_u32 as i64;
-
-        // Case 2: Check if locktime is satisfied by the current block height/time
-        // If locktime < LOCKTIME_THRESHOLD (500,000,000), it's a block height locktime
-        // Otherwise, it's a timestamp locktime
-        if (lock_time_u32 < LOCKTIME_THRESHOLD && lock_time_i64 < block_height as i64)
-            || (lock_time_u32 >= LOCKTIME_THRESHOLD && lock_time_i64 < block_time)
-        {
-            return true;
+        // Output amount check
+        let mut total_amount: u64 = 0;
+        for output in self.output.iter() {
+            if output.value.to_sat() > 2_100_000_000_000_000 {
+                panic!("[ERROR] Output amount exceeds maximum");
+            }
+            total_amount += output.value.to_sat();
         }
 
-        // Case 3: Transaction is still considered final if all inputs have SEQUENCE_FINAL
-        // This allows spending inputs even if the locktime isn't satisfied yet
-        for txin in &self.0.input {
-            // If any input doesn't have SEQUENCE_FINAL, the transaction isn't final
-            if txin.sequence != Sequence::MAX {
-                return false;
+        // Total amount check
+        if total_amount > 2_100_000_000_000_000 {
+            panic!("[ERROR] Total amount exceeds maximum");
+        }
+
+        // Inputs duplicate check
+        let mut seen_inputs = std::collections::HashSet::new();
+        for input in self.inner().input.iter() {
+            if seen_inputs.contains(&input.previous_output) {
+                panic!("[ERROR] Duplicate input found");
+            }
+            seen_inputs.insert(input.previous_output);
+        }
+
+        if self.is_coinbase() {
+            let script_len = self.input[0].script_sig.len();
+            if script_len < 2 || script_len > 100 {
+                panic!("Coinbase script length out of range");
+            }
+        } else {
+            for input in self.input.iter() {
+                if input.previous_output.is_null() {
+                    panic!("Null previous output");
+                }
             }
         }
+    }
 
-        // If we get here, all inputs have SEQUENCE_FINAL
-        let result = true;
-        // println!("[DEBUG] Is Final Transaction: {}", result);
-        result
+    /// Does not include both block_time and median_time_past as which one will be used is already checked
+    pub fn verify_final_tx(&self, time_to_compare: u32, block_height: u32) {
+        let lock_time = self.0.lock_time.to_consensus_u32();
+
+        if lock_time == 0 {
+            return;
+        }
+
+        if (lock_time < LOCKTIME_THRESHOLD && lock_time <= block_height)
+            || (lock_time >= LOCKTIME_THRESHOLD && lock_time < time_to_compare)
+        {
+            return;
+        }
+
+        for txin in &self.0.input {
+            if txin.sequence != Sequence::MAX {
+                panic!("[ERROR] Transaction is not final");
+            }
+        }
     }
 
     /// Calculates relative timelock requirements based on BIP-68
@@ -309,25 +298,22 @@ impl CircuitTransaction {
     /// Panics if `prev_heights` doesn't have the same length as the transaction inputs.
     pub fn calculate_sequence_locks(
         &self,
-        flags: u32,
-        prev_heights: &mut Vec<i32>,
-        block: &CircuitBlockHeader,
-    ) -> (i32, i64) {
-        // println!("[DEBUG] Calculating sequence locks");
-
+        is_bip68_active: bool,
+        prevouts: &Vec<UTXO>,
+    ) -> (u32, u32) {
         // Ensure we have height information for each input
-        assert_eq!(prev_heights.len(), self.0.input.len());
+        assert_eq!(prevouts.len(), self.0.input.len());
 
         // Will be set to the equivalent height- and time-based nLockTime values
         // that would be necessary to satisfy all relative lock-time constraints.
         // The semantics of nLockTime are the last invalid height/time, so
         // use -1 to have the effect of any height or time being valid.
-        let mut min_height = -1;
-        let mut min_time = -1;
+        let mut min_height = 0;
+        let mut min_time = 0;
 
         // BIP-68 only applies to transactions version 2 or higher
         // and only when LOCKTIME_VERIFY_SEQUENCE flag is set
-        let enforce_bip68 = self.0.version.0 >= 2 && flags & LOCKTIME_VERIFY_SEQUENCE != 0;
+        let enforce_bip68 = self.0.version.0 >= 2 && is_bip68_active;
 
         // Skip processing if BIP-68 is not being enforced
         if !enforce_bip68 {
@@ -338,38 +324,35 @@ impl CircuitTransaction {
         for (txin_index, txin) in self.0.input.iter().enumerate() {
             // Sequence numbers with the most significant bit set are not
             // treated as relative lock-times
-            if (txin.sequence.0 & SEQUENCE_LOCKTIME_DISABLED) != 0 {
+            if !txin.sequence.is_relative_lock_time() {
                 // The height of this input is not relevant for sequence locks
-                prev_heights[txin_index] = 0;
                 continue;
             }
 
             // Get the height of the block containing the spent output
-            let coin_height = prev_heights[txin_index];
+            let coin_height = prevouts[txin_index].block_height;
+            let coin_time = prevouts[txin_index].block_time;
 
             // Check if this is a time-based relative lock time (bit 22 set)
-            if (txin.sequence.0 & SEQUENCE_LOCKTIME_TYPE_FLAG) != 0 {
-                // Time-based relative lock-times are measured from the smallest allowed
-                // timestamp of the block containing the output being spent,
-                // which is the median time past of the block prior.
-                let coin_time =
-                    get_median_time_past_for_height(block, std::cmp::max(coin_height - 1, 0));
-
+            if txin.sequence.is_time_locked() {
                 // Calculate the lock time in seconds
                 // The 16-bit mask is shifted by the granularity (9 bits = 512 seconds)
                 let sequence_locked_seconds =
                     (txin.sequence.0 & SEQUENCE_LOCKTIME_MASK) << SEQUENCE_LOCKTIME_GRANULARITY;
 
+                // Relative timelock must exist and it should be in seconds
+                // let time_lock_seconds = time_lock.expect("Time lock should be in seconds");
+
                 // Calculate when this input can be spent
                 // NOTE: Subtract 1 to maintain nLockTime semantics (last invalid time)
-                let new_min_time = coin_time + (sequence_locked_seconds as i64) - 1;
+                let new_min_time = coin_time + (sequence_locked_seconds) - 1;
 
                 // Keep track of the most restrictive timelock
                 min_time = std::cmp::max(min_time, new_min_time);
             } else {
                 // Height-based relative lock time (bit 22 not set)
                 // The 16-bit mask gives the number of blocks directly
-                let sequence_locked_height = (txin.sequence.0 & SEQUENCE_LOCKTIME_MASK) as i32;
+                let sequence_locked_height = txin.sequence.0 & SEQUENCE_LOCKTIME_MASK;
 
                 // Calculate when this input can be spent
                 // NOTE: Subtract 1 to maintain nLockTime semantics (last invalid height)
@@ -381,7 +364,6 @@ impl CircuitTransaction {
         }
 
         let result = (min_height, min_time);
-        // println!("[DEBUG] Sequence Locks: {:?}", result);
         result
     }
 
@@ -400,25 +382,22 @@ impl CircuitTransaction {
     ///
     /// `true` if all sequence locks are satisfied, `false` otherwise
     pub fn evaluate_sequence_locks(
-        block: &CircuitBlockHeader,
-        block_height: i32,
-        lock_pair: (i32, i64),
+        block_height: u32,
+        median_time_past: u32,
+        lock_pair: (u32, u32),
     ) -> bool {
-        // println!("[DEBUG] Evaluating sequence locks");
-
         // Get current block time (median time past)
-        let block_time = get_median_time_past(block);
+        // let block_time = get_median_time_past(block);
 
         // Check if either the height or time lock requirement hasn't been met
         // The locks specify the last invalid block/time, so the current block/time
         // must be strictly greater to be valid
-        if lock_pair.0 >= block_height || lock_pair.1 >= block_time {
+        if lock_pair.0 >= block_height || lock_pair.1 >= median_time_past {
             return false;
         }
 
         // All sequence locks are satisfied
         let result = true;
-        // println!("[DEBUG] Sequence Locks Satisfied: {}", result);
         result
     }
 
@@ -440,84 +419,22 @@ impl CircuitTransaction {
     /// `true` if all sequence locks are satisfied, `false` otherwise
     pub fn sequence_locks(
         &self,
-        flags: u32,
-        prev_heights: &mut Vec<i32>,
-        block: &CircuitBlockHeader,
-        block_height: i32,
-    ) -> bool {
-        // println!("[DEBUG] Checking sequence locks");
-
+        is_bip68_active: bool,
+        prevouts: &Vec<UTXO>,
+        median_time_past: u32,
+        block_height: u32,
+    ) {
         // First, calculate the sequence locks
-        let lock_pair = self.calculate_sequence_locks(flags, prev_heights, block);
+        let lock_pair = self.calculate_sequence_locks(is_bip68_active, prevouts);
 
         // Then, evaluate if they're satisfied
-        let result = Self::evaluate_sequence_locks(block, block_height, lock_pair);
+        let result = Self::evaluate_sequence_locks(block_height, median_time_past, lock_pair);
 
-        // println!("[DEBUG] Sequence Locks Check: {}", result);
-        result
+        if !result {
+            println!("Txid: {:?}", self.txid());
+            panic!("[ERROR] Sequence locks not satisfied");
+        }
     }
-}
-
-// Helper functions for timelock operations
-
-/// Gets the median time past for a block at the given height
-///
-/// The median time past (MTP) is used for time-based lock validation and is
-/// defined as the median timestamp of the previous 11 blocks. This provides
-/// a more stable notion of "block time" that miners cannot manipulate easily.
-///
-/// In Bitcoin, MTP was introduced by BIP-113 to address timestamp manipulation
-/// issues. Using the median of the last 11 blocks creates a more predictable and
-/// manipulation-resistant time reference for consensus rules.
-///
-/// Note: This is a simplified implementation that would need to be expanded
-/// in a full Bitcoin implementation to actually compute the median of the
-/// last 11 blocks' timestamps. The full implementation would require access
-/// to the blockchain history to retrieve the timestamps of the previous blocks.
-///
-/// # Arguments
-///
-/// * `header` - The current block header for context
-/// * `height` - The block height to get the median time past for
-///
-/// # Returns
-///
-/// The median time past as a Unix timestamp (seconds since epoch)
-fn get_median_time_past_for_height(header: &CircuitBlockHeader, height: i32) -> i64 {
-    // In a real implementation, this would:
-    // 1. Look up the block at the given height
-    // 2. Retrieve the timestamps of that block and its 10 ancestors
-    // 3. Sort those timestamps
-    // 4. Return the middle value (median) of those sorted timestamps
-    //
-    // For circuit simplicity in this implementation, we'll just return the block's timestamp
-    // as a simplification. This is not consensus-compatible with Bitcoin but serves as
-    // a placeholder for the actual implementation.
-    header.time as i64
-}
-
-/// Gets the median time past for the current block
-///
-/// The median time past (MTP) is a critical concept in Bitcoin's consensus rules,
-/// especially for time-based locks like OP_CHECKLOCKTIMEVERIFY and BIP-68 sequence
-/// locks. By using the median of the previous 11 blocks' timestamps rather than
-/// the current block's timestamp, Bitcoin prevents miners from manipulating
-/// timelocks by setting extreme timestamp values.
-///
-/// This is a convenience function that provides the MTP for the current block.
-///
-/// # Arguments
-///
-/// * `header` - The block header to get the median time past for
-///
-/// # Returns
-///
-/// The median time past as a Unix timestamp (seconds since epoch)
-fn get_median_time_past(header: &CircuitBlockHeader) -> i64 {
-    // In a real implementation, this would compute the median of the
-    // last 11 blocks' timestamps (including this block's ancestors)
-    // For now, we'll just return the block's timestamp as a simplification
-    header.time as i64
 }
 
 /// Implementation of Borsh serialization for CircuitTransaction
@@ -800,15 +717,10 @@ impl Into<Transaction> for CircuitTransaction {
 
 #[cfg(test)]
 mod tests {
+    use bitcoin::block::Header;
+
     use super::*;
 
-    /// Tests the transaction ID calculation for a legacy transaction
-    ///
-    /// This test verifies that our implementation correctly calculates the txid
-    /// for a real, non-SegWit transaction from the Bitcoin blockchain.
-    /// The test compares our result with the known expected transaction ID.
-    /// Note: Bitcoin transaction IDs are typically displayed in little-endian format,
-    /// so we reverse our big-endian result for the comparison.
     #[test]
     fn test_txid_legacy() {
         let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("0100000001c997a5e56e104102fa209c6a852dd90660a20b2d9c352423edce25857fcd3704000000004847304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901ffffffff0200ca9a3b00000000434104ae1a62fe09c5f51b13905f07f06b99a2f7159b2225f374cd378d71302fa28414e7aab37397f554a7df5f142c21c1b7303b8a0626f1baded5c72a704f7e6cd84cac00286bee0000000043410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac00000000").unwrap()).unwrap());
@@ -820,12 +732,6 @@ mod tests {
         );
     }
 
-    /// Tests the transaction ID calculation for a SegWit transaction
-    ///
-    /// This test verifies that our implementation correctly calculates the txid
-    /// for a SegWit transaction. For SegWit transactions, the txid excludes
-    /// the witness data, which is a key feature of SegWit's transaction
-    /// malleability protection.
     #[test]
     fn test_txid_segwit() {
         let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("0100000000010142ec43062180882d239799f134f7d8e9d104f37d87643e35fda84c47e4fc67a00000000000ffffffff026734000000000000225120e86c9c8c6777f28af40ef0c4cbd8308d27b60c7adf4f668d2433113616ddaa33cf660000000000001976a9149893ea81967d770f07f9bf0f659e3bce155be99a88ac01418a3d2a2182154dfd083cf48bfcd9f7dfb9d09eb46515e0043cdf39b688e9e711a2ce47f0f535191368be52fd706d77eb82eacd293a6a881491cdadf99b1df4400100000000").unwrap()).unwrap());
@@ -837,12 +743,6 @@ mod tests {
         );
     }
 
-    /// Tests the witness transaction ID calculation for a legacy transaction
-    ///
-    /// For non-SegWit transactions, the witness transaction ID (wtxid) should be
-    /// identical to the transaction ID (txid). This test verifies that our
-    /// implementation correctly calculates the wtxid for a legacy transaction
-    /// and matches the result from bitcoin-rs library's computation.
     #[test]
     fn test_wtxid_legacy() {
         let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("0100000001c997a5e56e104102fa209c6a852dd90660a20b2d9c352423edce25857fcd3704000000004847304402204e45e16932b8af514961a1d3a1a25fdf3f4f7732e9d624c6c61548ab5fb8cd410220181522ec8eca07de4860a4acdd12909d831cc56cbbac4622082221a8768d1d0901ffffffff0200ca9a3b00000000434104ae1a62fe09c5f51b13905f07f06b99a2f7159b2225f374cd378d71302fa28414e7aab37397f554a7df5f142c21c1b7303b8a0626f1baded5c72a704f7e6cd84cac00286bee0000000043410411db93e1dcdb8a016b49840f8c53bc1eb68a382e97b1482ecad7b148a6909a5cb2e0eaddfb84ccf9744464f82e160bfa9b8b64f9d4c03f999b8643f656b412a3ac00000000").unwrap()).unwrap());
@@ -851,12 +751,6 @@ mod tests {
         assert_eq!(wtxid, bitcoin_wtxid);
     }
 
-    /// Tests the witness transaction ID calculation for a SegWit transaction
-    ///
-    /// For SegWit transactions, the witness transaction ID (wtxid) includes the
-    /// witness data, making it different from the transaction ID (txid).
-    /// This test verifies that our implementation correctly calculates the
-    /// wtxid for a SegWit transaction and matches the result from bitcoin-rs.
     #[test]
     fn test_wtxid_segwit() {
         let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("0200000000010113e176edfce2e0c7b5971d77dce40a7dc00def275bff7bacdb376f5cd47ba6670200000000ffffffff023d7f0000000000002251202781c84ebc5bce862463b8cd6145d68491c5fa83756562f0b9efc9ec81f7f7080000000000000000076a5d0414011400014016d434ce9d12620cc97e7e443444820c5cdf89b393f8a98cc8c79f0a91e6ba1f58f5e6a98f6a2357406bad50e0fb18abebfc94fb04c7976f2b9d43c8f2f4ef9f00000000").unwrap()).unwrap());
@@ -865,12 +759,6 @@ mod tests {
         assert_eq!(wtxid, bitcoin_wtxid);
     }
 
-    /// Tests the witness transaction ID calculation for a mixed transaction
-    ///
-    /// This test verifies the wtxid calculation for a transaction that has
-    /// both SegWit and non-SegWit inputs. This is important to validate
-    /// that our implementation correctly handles mixed transaction types,
-    /// which are common in the Bitcoin blockchain.
     #[test]
     fn test_wtxid_mixed() {
         let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("0100000000010259687388210557217699dfd43e04b41511e33aae70e1380d1083bbfb993f12a70100000000ffffffff17ef8a209e53c3b70b8b4944b5418c0c64ae5e515d66cc54675cc8d9348dc4cd000000006b483045022100b3a922bf43654c40377c2a426a081b112304dc3165e0b1428db21c83a8bdb7f502203a143acfb2f869816cf041899f446463ad0cc24c79cf66c51969edcb6e00487d0121026982c4421a2445efdd0162accb013d1feba9b9f84ea2c6057c3a535cf6c2dadbffffffff02f8fe9e0500000000160014eb00eec2dd3a416988f23418003268bdd4ffd400205913000000000017a91479deefa2344faeb4706858b65d9aa5ac00760f2987024830450221008016450ad0999300ad84d24f7ecb275a18b71f8aa70f85a8c64a1c7d5545dd34022033a904f78946d73294151937fb90686864bdb766eccd2c5e764f2be3136097580121032f2b2402a2c4aa07121355378d02f84eb6d17d61b834e51e4a62cab8667440ee0000000000").unwrap()).unwrap());
@@ -879,12 +767,28 @@ mod tests {
         assert_eq!(wtxid, bitcoin_wtxid);
     }
 
-    /// Tests the From<Transaction> implementation for CircuitTransaction
-    ///
-    /// This test verifies that a standard Bitcoin transaction can be correctly
-    /// converted to a CircuitTransaction using both the From trait and the
-    /// from() method. It ensures that the wrapped transaction maintains
-    /// the same properties and produces the same transaction ID.
+    #[test]
+    fn test_wtxid_txid_wrapped_segwit_p2wsh() {
+        let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("02000000000101274d91a28c19b438dca594861904754fc3f6fd20596dae920fc84f1dd604467d00000000232200209e10c2e5f987892dc244c68c0976d7372560c7a2eb66a1eca50b72fe91273356fdffffff01d32601000000000017a914e7d5b5e0e78e62a2b5ec1992fcdff29b3592f19287054730440220313bbf45eb48c441e03c71c2ce4a521d6333505f05606c493cd5af6c9184669702200d4ef55a5119d9c99600ece27dd23a2e3100e955dd6d760113eee2ea03d51821012103e883d861ed309b2cf4ac1c55e718d7e74ac29588b4cf67806ae141a1b89147ed2103d456243e3f0514c72c12955685d5e5a9ea11e6411f14c9ed55fc52df832476050101c67651876375146c6c16edcbe7affb09db27ccce423fcbdd5eee3414ff71d1b07938f5d851cfef7048d4c302bf1254da677652876375146c6c16edcbe7affb09db27ccce423fcbdd5eee34146e1b083c68550638432760aaf567c81fe8ad1e1167765387637514eb632ddb345d69dff5c949947eca73d17984909b14a6f90bf7f475e8db549aa309cdfd70bb7e1d1c2067548814eb632ddb345d69dff5c949947eca73d17984909b14f2fe3a09eb39336280602725a14aa9cb9a9912e16868687ba98878a988ac00000000").unwrap()).unwrap());
+        let wtxid = tx.wtxid();
+        let bitcoin_wtxid: [u8; 32] = tx.0.compute_wtxid().to_byte_array();
+        assert_eq!(wtxid, bitcoin_wtxid);
+        let txid = tx.txid();
+        let bitcoin_txid: [u8; 32] = tx.0.compute_txid().to_byte_array();
+        assert_eq!(txid, bitcoin_txid);
+    }
+
+    #[test]
+    fn test_wtxid_txid_wrapped_segwit_p2wpkh() {
+        let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("0200000000010137a30260883b90a1181a364df7695f527d951b726942cc889db3cbefedd81f840000000017160014488f02106cac5c542291e1a94853556b7ac8c630fdffffff0244a90100000000001976a914b90702429b6c012f101fbda7306b44014f196d9788acccee8506000000001976a914c3c419a17435cd45f1ecd7d77f72bebd9eb3795388ac02473044022035359460f33455858dfe534dbb4bd85ba28d22a27ebdbe194b3e1a5aed08520e022043e9dfeddda7c3838bf8b83ba5f6dc4833bdef7c26c5109a2b2a3426617383b0012102cf7b0a6b9d72e4e193fabe6c4adc9660f238d764afac947933fde2ddc1d6fea250a80d00").unwrap()).unwrap());
+        let wtxid = tx.wtxid();
+        let bitcoin_wtxid: [u8; 32] = tx.0.compute_wtxid().to_byte_array();
+        assert_eq!(wtxid, bitcoin_wtxid);
+        let txid = tx.txid();
+        let bitcoin_txid: [u8; 32] = tx.0.compute_txid().to_byte_array();
+        assert_eq!(txid, bitcoin_txid);
+    }
+
     #[test]
     fn test_from_transaction() {
         let original_tx = Transaction {
@@ -903,12 +807,6 @@ mod tests {
         assert_eq!(bridge_tx.txid(), bridge_tx2.txid());
     }
 
-    /// Tests the Into<Transaction> implementation for CircuitTransaction
-    ///
-    /// This test verifies that a CircuitTransaction can be correctly converted
-    /// back to a standard Bitcoin transaction using the Into trait. It ensures
-    /// that the conversion preserves the transaction's properties and
-    /// produces the same transaction ID.
     #[test]
     fn test_into_transaction() {
         let bridge_tx = CircuitTransaction(Transaction {
@@ -923,12 +821,6 @@ mod tests {
         assert_eq!(original_tx.compute_txid().to_byte_array(), bridge_tx.txid());
     }
 
-    /// Tests the Borsh serialization and deserialization for CircuitTransaction
-    ///
-    /// This test verifies that a CircuitTransaction can be correctly serialized
-    /// to bytes using Borsh, and then deserialized back to a CircuitTransaction
-    /// that is equivalent to the original. This is important for ensuring that
-    /// transactions can be correctly stored and transmitted in zero-knowledge circuits.
     #[test]
     fn test_borsh_serialization() {
         let original_tx = Transaction {
@@ -949,12 +841,6 @@ mod tests {
         assert_eq!(bridge_tx.txid(), deserialized.txid());
     }
 
-    /// Tests the Deref and DerefMut trait implementations for CircuitTransaction
-    ///
-    /// This test verifies that we can access and modify the inner Transaction
-    /// directly through the CircuitTransaction wrapper using the Deref and
-    /// DerefMut traits. This provides an ergonomic API that lets users
-    /// interact with CircuitTransaction as if it were a regular Transaction.
     #[test]
     fn test_deref_traits() {
         let mut bridge_tx = CircuitTransaction(Transaction {
@@ -970,12 +856,6 @@ mod tests {
         assert_eq!(bridge_tx.version, Version(2));
     }
 
-    /// Tests handling of a more complex transaction structure
-    ///
-    /// This test creates a transaction with inputs and outputs, then wraps it
-    /// in a CircuitTransaction and verifies that all properties are correctly
-    /// maintained, including script signatures, public keys, values, and
-    /// transaction IDs.
     #[test]
     fn test_complex_transaction() {
         let script_sig = ScriptBuf::from_bytes(vec![0x76, 0xa9, 0x14]);
@@ -1009,5 +889,110 @@ mod tests {
         assert_eq!(bridge_tx.output[0].script_pubkey, script_pubkey);
         assert_eq!(bridge_tx.output[0].value, Amount::from_sat(50000));
         assert_eq!(bridge_tx.txid(), tx.compute_txid().to_byte_array());
+    }
+
+    #[test]
+    fn test_sequence_locks() {
+        let header_15: Header = bitcoin::consensus::deserialize(&hex::decode("00000020646781e6eab68bc63f8f44646990cd9fe7739286c7802a425c7fd76e00000000dce4ea98c6e9e7cda7d223a4a3958adc05469b0a01a7352ecfb6022b6f3e5bad9cc1ad67ffff001d6a1bdaa0").unwrap()).unwrap(); // Tx block
+        let header_14: Header = bitcoin::consensus::deserialize(&hex::decode("000000204c4879a4f1957c363a5298c80083fdfe35e390a99668a5ade4c951a900000000490359eed7e3d0f8912d7da2a9e6deacf926ef7782ed40687b2a32c2a9b78539ebbcad67ffff001d4ed447d1").unwrap()).unwrap();
+        let header_13: Header = bitcoin::consensus::deserialize(&hex::decode("000000202642f6d2ffcba6ccf647de97d0b1f5c709b435870e419663f32800e600000000d253595bb5ffae226cf30ca576a5f418da81ec5d6214c5630f65f8114e3de4643ab8ad67ffff001d0c983cc0").unwrap()).unwrap();
+        let header_12: Header = bitcoin::consensus::deserialize(&hex::decode("0000002025d07e712f9c2ff76e9c7a45822a10a3b054d5667d16d7f3e0ca53e600000000b4277cee26e44fbc5983762efc0f31bed2624c03938838b3f0495829862c8eba89b3ad67ffff001d0e9209a2").unwrap()).unwrap();
+        let header_11: Header = bitcoin::consensus::deserialize(&hex::decode("0000002025b2a397efe878cf99e4816049e2e901ebdf47114eb6364ad85a870b00000000e7728ec4373a169117a947e33aaee06ee8c553507b202cdaea2a3b831a7e56c4d8aead67ffff001d8e67cfd6").unwrap()).unwrap(); // Prevouts[1..4] block
+        let header_10: Header = bitcoin::consensus::deserialize(&hex::decode("00000020600fe8487479569e5aa939e3c93bce822445eb7ab65865b3b16c49cc000000000cb3e1e20f23ea4bc25c1b3badc8b311102e24659135cea989f842ad76ec940027aaad67ffff001d3d0613b7").unwrap()).unwrap();
+        let header_9: Header = bitcoin::consensus::deserialize(&hex::decode("0000002093ea53c6bb156b1a54af21af98891810da3ea197cb7e27690dcc247f000000004ec077d63731a638dc75bdd1590eea8b464f681842e69a637c81bdecf8738cba76a5ad67ffff001d40162c9a").unwrap()).unwrap();
+        let header_8: Header = bitcoin::consensus::deserialize(&hex::decode("0000002069fc3a5b02012015a74085ebd6566297c1977d88236d792b9bab94d6000000004027cf2741daac5482e9b5169086c43f417a351e8f639d2a565b6865d91edf79c5a0ad67ffff001d44d0fba6").unwrap()).unwrap();
+        let header_7: Header = bitcoin::consensus::deserialize(&hex::decode("0000002068e33b5a84f0cee8d956de3b8b49e632665c8299fb100c0a7e8ea2b2000000007157e0ec7b053a91bfcf943176a9925b8af9ba59dc69cb59f676d9ad5def5dfb149cad67ffff001d50580746").unwrap()).unwrap();
+        let header_6: Header = bitcoin::consensus::deserialize(&hex::decode("000000204224edd0e6859817d153c5f3f2889ce5419d742511d0779772e93cdf00000000b7aa52b76d90f397a326a26b4fb0463f38cff763aaf896673ebf2d1ee2c51bb36397ad67ffff001d1f35c057").unwrap()).unwrap();
+        let header_5: Header = bitcoin::consensus::deserialize(&hex::decode("00000020118f5f386fe3604f38e0e4d6414bc1dd8ac0aa3c5097a7ed4f4ab878000000008c81410f53117093d747dd67014b9eb507cd556c81ffb35a19bc8482541a5fe2b292ad67ffff001daccdb197").unwrap()).unwrap();
+        let header_4: Header = bitcoin::consensus::deserialize(&hex::decode("00000020fb98eac85822a26124bca95cf51170367ea33f6ddd6e813ade2bf2b100000000b21438c0a682cdcccbdb0247db2da55d29af02d06726b59b786601a6ff0ce7eb018ead67ffff001d322eab99").unwrap()).unwrap();
+        let header_3: Header = bitcoin::consensus::deserialize(&hex::decode("000000206dfad61b027824a71c461eb4b52c7b5394560a3df1745747923c1b07000000008a9085eda6256dc0f93f8c1c2383831c62f55de780ab866b313d6ce080e285fb5089ad67ffff001d10b9bafb").unwrap()).unwrap();
+        let header_2: Header = bitcoin::consensus::deserialize(&hex::decode("0000002061377b362de02aacaf00bb78c38cc71e119ffea8ac6e42b29418774b00000000639a8b1e3eece1a67775dcc515a26161e210a314c782071dbff37856653da5549f84ad67ffff001d29a22858").unwrap()).unwrap();
+        let header_1: Header = bitcoin::consensus::deserialize(&hex::decode("00000020c0d91a803d4172159f428971634f16ffdb8bbf9187760bfdbf0a5dd700000000cfc4046ef47f6324ec0ef4f38658f1e93d0ac8835c1885873092b7128b178681ee7fad67ffff001d247dcb7a").unwrap()).unwrap();
+        let header_0: Header = bitcoin::consensus::deserialize(&hex::decode("00000020a1400b04d2c4919f1cadff2a9d4153030be8cd46c17eca69f36fb0850000000090797454023d3c03bcb917fe8d5e2a8aad6538d4408bf90c75a5ab98d1c6aa053d7bad67ffff001d2a7a10b1").unwrap()).unwrap();
+        println!("block header: {:?}", header_11);
+        let timestamps = vec![
+            header_15.time,
+            header_14.time,
+            header_13.time,
+            header_12.time,
+            header_11.time,
+            header_10.time,
+            header_9.time,
+            header_8.time,
+            header_7.time,
+            header_6.time,
+            header_5.time,
+            header_4.time,
+            header_3.time,
+            header_2.time,
+            header_1.time,
+            header_0.time,
+        ];
+        let mut mine_timestamps = timestamps[5..16].to_vec();
+        let mut spend_timestamps = timestamps[1..12].to_vec();
+        mine_timestamps.sort_by(|a, b| a.cmp(b));
+        spend_timestamps.sort_by(|a, b| a.cmp(b));
+        let mine_median_time_past = mine_timestamps[5];
+        let spend_median_time_past = spend_timestamps[5];
+        println!("mine median time past: {:?}", mine_median_time_past);
+        println!("spend median time past: {:?}", spend_median_time_past);
+        let tx = CircuitTransaction(bitcoin::consensus::deserialize(&hex::decode("020000000001040eccb5b2036e90b63a8cb94bebb26f0013b57b8d59fcfe422719ca86073a7a430000000000ffffffffdc9a1e2bbe43cbf132716bc72b9958456b71f58a025c220cb39b4815e74cfc94000000000004004000dc9a1e2bbe43cbf132716bc72b9958456b71f58a025c220cb39b4815e74cfc940100000000ffffffffdc9a1e2bbe43cbf132716bc72b9958456b71f58a025c220cb39b4815e74cfc940200000000ffffffff024c1d0000000000002251200e9f8622c811a7c0c082bd0e2b8db205db4c1877a22a02165a148f9ec785eaee4c5400000000000022512055adedbbc065b351050eb29627ba5ca3bb7134268a396a69e2b6d5d6f9ff650404004730440220051de5717227b3bd3ca4ba46b788082c4fab9e54b7e42f0b66f2c953a3e22fd102203922cf5cddb17e64f8d518c21365e859ca2150799a8469c533a561c971f7339e01473044022029a3e859b3519d30f9265f4396b916f67346a8a832d43f9b1341f63895f4fc660220156b73976aa440aeeef1247eabad347e4ef76b2835670e57d262c193d50a272b83475221038d165da47910f53d3e75aff5e7b0e2b9ee6f13474b885fea8adb8a07e9d5b267210381071665ea05c9099246e1aa66a6bd8c613e974ce64bac7bb3705f8d214dcc9c52ae03483045022100b46d3051c53db81162c861aac98b8c299c2ec4dffa9e6672639a6f85f9f2742d02201e402777b1e07c69bacd436785165c1f8de2c1cc031d3e38ae4e6e977dec6570812102764658d172abdc24bfbda77205657ee389cb8946def560ed2c40722f3ed9910b1f03040040b27576a914724e8781e249014c488a8d286823f17d02e4035e88ac030047304402202a516794326e250af20c333267283e6736dcd375c72f7bae1577137181b3ab86022006b40cb8e939c80b153fba36f392ac81d26e02b1d52cc1fb0704bdcb0c8a6ea201255121038d165da47910f53d3e75aff5e7b0e2b9ee6f13474b885fea8adb8a07e9d5b26751ae0300483045022100cf31f924bd507ba0a49ef87635d8641730dfa333702a7437f41b71633f0c2fa2022060bf3ff9f517f12c30dc5c8f7728ed2da4095c013f77819ffa055ec4eba80bf301255121038d165da47910f53d3e75aff5e7b0e2b9ee6f13474b885fea8adb8a07e9d5b26751ae00000000").unwrap()).unwrap());
+        println!("sequence: {:?}", tx.0.input[1].sequence);
+        println!(
+            "is relative time lock enabled: {:?}",
+            tx.0.input[1].sequence.is_relative_lock_time()
+        );
+        println!(
+            "relative time lock is time related: {:?}",
+            tx.0.input[1].sequence.is_time_locked()
+        );
+        println!(
+            "relative time lock is height related: {:?}",
+            tx.0.input[1].sequence.is_height_locked()
+        );
+        println!(
+            "Until when: {:?}",
+            tx.0.input[1].sequence.to_relative_lock_time()
+        );
+        let prev_txout_0: TxOut = bitcoin::consensus::deserialize(&hex::decode("4c1d000000000000220020f810c8d49dc97cfeb79898d977836e52ccadafcfd3cb40032fc4ea3a5853c4aa").unwrap()).unwrap();
+        let prev_txout_1: TxOut = bitcoin::consensus::deserialize(&hex::decode("e8030000000000002200201914b2d53b2c29defe55c7d94d2ea6aedd7c99106c7c6a94c330f444c57b4691").unwrap()).unwrap();
+        let prev_txout_2: TxOut = bitcoin::consensus::deserialize(&hex::decode("e80300000000000022002058e7198cb5dd8c6302a2976a20595317c4767e3da595f8e7e512b3aa121b11fe").unwrap()).unwrap();
+        let prev_txout_3: TxOut = bitcoin::consensus::deserialize(&hex::decode("204e00000000000022002058e7198cb5dd8c6302a2976a20595317c4767e3da595f8e7e512b3aa121b11fe").unwrap()).unwrap();
+        let prevouts = vec![
+            UTXO {
+                value: prev_txout_0.value.to_sat(),
+                block_height: 69803,
+                block_time: 0, // Irrelevant for this test
+                is_coinbase: false,
+                script_pubkey: prev_txout_0.script_pubkey.to_bytes(),
+            },
+            UTXO {
+                value: prev_txout_1.value.to_sat(),
+                block_height: 69909,
+                block_time: mine_median_time_past,
+                is_coinbase: false,
+                script_pubkey: prev_txout_1.script_pubkey.to_bytes(),
+            },
+            UTXO {
+                value: prev_txout_2.value.to_sat(),
+                block_height: 69909,
+                block_time: mine_median_time_past,
+                is_coinbase: false,
+                script_pubkey: prev_txout_2.script_pubkey.to_bytes(),
+            },
+            UTXO {
+                value: prev_txout_3.value.to_sat(),
+                block_height: 69909,
+                block_time: mine_median_time_past,
+                is_coinbase: false,
+                script_pubkey: prev_txout_3.script_pubkey.to_bytes(),
+            },
+        ];
+
+        let (min_height, min_time) = tx.calculate_sequence_locks(true, &prevouts);
+        println!("Minimum height: {}", min_height);
+        println!("Minimum time: {}", min_time);
+
+        tx.sequence_locks(true, &prevouts, spend_median_time_past, 69913);
     }
 }

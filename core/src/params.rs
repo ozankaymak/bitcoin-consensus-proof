@@ -47,45 +47,40 @@ pub struct NetworkParams {
     /// to be hidden behind a hash, simplifying addresses and improving security.
     pub bip16_height: u32,
     // pub bip16_exception: Option<[u8; 32]>,
-    /// The block height at which BIP-34 activated
-    ///
-    /// BIP-34 required the block height to be included in the coinbase transaction,
-    /// preventing duplicate coinbase transaction IDs and associated security issues.
+
+    // /// BIP30: Duplicate transactions
+    // pub bip30_height: u32,
     pub bip34_height: u32,
-    // pub bip34_hash: [u8; 32],
-    /// The block height at which BIP-65 (CHECKLOCKTIMEVERIFY) activated
-    ///
-    /// BIP-65 introduced the OP_CHECKLOCKTIMEVERIFY opcode, allowing scripts to check
-    /// if a certain block height or time has been reached.
+
     pub bip65_height: u32,
 
-    /// The block height at which BIP-66 (strict DER signatures) activated
-    ///
-    /// BIP-66 enforced strict DER encoding of signatures to prevent malleability and
-    /// potential security issues.
-    pub bip66_height: u32,
+    /// BIP68: Relative lock-time using consensus-enforced sequence numbers
+    pub bip68_height: u32,
 
-    /// The block height at which BIP-68, BIP-112, and BIP-113 (CSV) activated
-    ///
-    /// These BIPs introduced relative timelocks (CheckSequenceVerify) and improved
-    /// timestamp handling for consensus.
-    pub csv_height: u32,
+    // /// BIP66: Strict DER signatures
+    // pub bip66_height: u32,
+    /// BIP112: CHECKSEQUENCEVERIFY
+    pub bip112_height: u32,
+
+    /// BIP113: Median time-past as endpoint for lock-time calculations
+    pub bip113_height: u32,
 
     /// The block height at which Segregated Witness (segwit) activated
     ///
     /// Segwit (BIP-141, BIP-143, BIP-144, BIP-145) separated transaction signatures
     /// from transaction data, fixing transaction malleability and enabling various improvements.
-    pub segwit_height: u32,
+    pub bip141_height: u32,
 
     /// The block height at which Taproot (BIP-341, BIP-342) activated
     ///
     /// Taproot introduced Schnorr signatures, Merklelized Alternative Script Trees (MAST),
     /// and improved privacy and efficiency for Bitcoin transactions.
-    pub taproot_activation_height: u32,
+    pub bip341_height: u32,
     // The following fields are commented out but could be added in the future:
     // pub genesis_block_hash: [u8; 32], // Genesis block hash
     // pub genesis_block_header: BlockHeader, // Genesis block header
     // pub genesis_block: Block, // Genesis block
+    pub assume_valid_height: u32,
 }
 
 /// The currently configured Bitcoin network type
@@ -146,124 +141,176 @@ pub const MINIMUM_WORK_TESTNET4: U256 =
 pub const NETWORK_PARAMS: NetworkParams = {
     match option_env!("BITCOIN_NETWORK") {
         // Mainnet parameters
-        Some(n) if matches!(n.as_bytes(), b"mainnet") => NetworkParams {
-            // Maximum difficulty bits (minimum difficulty)
-            max_bits: 0x1D00FFFF, // The original max target from Bitcoin's genesis block
-
-            // Maximum target value as a 256-bit integer (minimum difficulty)
-            max_target: U256::from_be_hex(
-                "00000000FFFF0000000000000000000000000000000000000000000000000000",
-            ),
-
-            // Same max target as above, but as a 32-byte array for convenience
-            max_target_bytes: [
-                0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0,
-            ],
-
-            // Block reward halving occurs every 210,000 blocks (about 4 years)
-            subsidy_halving_interval: 210000,
-
-            // BIP-16 (Pay to Script Hash) activation height
-            bip16_height: 173805,
-
-            // BIP-34 (Block height in coinbase) activation height
-            bip34_height: 227931,
-
-            // BIP-65 (CHECKLOCKTIMEVERIFY) activation height
-            bip65_height: 388381,
-
-            // BIP-66 (Strict DER signatures) activation height
-            bip66_height: 363725,
-
-            // BIP-68, BIP-112, BIP-113 (CSV) activation height
-            csv_height: 419328,
-
-            // Segregated Witness (BIP-141, BIP-143, BIP-144, BIP-145) activation height
-            segwit_height: 481824,
-
-            // Taproot (BIP-341, BIP-342) activation height
-            taproot_activation_height: 709632,
-            // Genesis block hash (commented out for now)
-            // genesis_block_hash: [0x00; 32], // 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
-        },
-        Some(n) if matches!(n.as_bytes(), b"testnet4") => NetworkParams {
-            max_bits: 0x1D00FFFF,
-            max_target: U256::from_be_hex(
-                "00000000FFFF0000000000000000000000000000000000000000000000000000",
-            ),
-            max_target_bytes: [
-                0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0,
-            ],
-            subsidy_halving_interval: 210000,
-            bip16_height: 1,
-            bip34_height: 1,
-            bip65_height: 1,
-            bip66_height: 1,
-            csv_height: 1,
-            segwit_height: 1,
-            taproot_activation_height: 0,
-            // genesis_block_hash: [0x00; 32], // 00000000da84f2bafbbc53dee25a72ae507ff4914b867c565be350b0da8bf043
-        },
-        Some(n) if matches!(n.as_bytes(), b"signet") => NetworkParams {
-            max_bits: 0x1E0377AE,
-            max_target: U256::from_be_hex(
-                "00000377AE000000000000000000000000000000000000000000000000000000",
-            ),
-            max_target_bytes: [
-                0, 0, 3, 119, 174, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0,
-            ],
-            subsidy_halving_interval: 210000,
-            bip16_height: 1,
-            bip34_height: 1,
-            bip65_height: 1,
-            bip66_height: 1,
-            csv_height: 1,
-            segwit_height: 1,
-            taproot_activation_height: 0,
-            // genesis_block_hash: [0x00; 32], // 00000008819873e925422c1ff0f99f7cc9bbb232af63a077a480a3633bee1ef6
-        },
-        Some(n) if matches!(n.as_bytes(), b"regtest") => NetworkParams {
-            max_bits: 0x207FFFFF,
-            max_target: U256::from_be_hex(
-                "7FFFFF0000000000000000000000000000000000000000000000000000000000",
-            ),
-            max_target_bytes: [
-                127, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0,
-            ],
-            subsidy_halving_interval: 150,
-            bip16_height: 0,
-            bip34_height: 100000000,
-            bip65_height: 1351,
-            bip66_height: 1251,
-            csv_height: 1,
-            segwit_height: 1,
-            taproot_activation_height: 0,
-            // genesis_block_hash: [0x00; 32], // 0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206
-        },
-        None => NetworkParams {
-            // Default to mainnet
-            max_bits: 0x1D00FFFF,
-            max_target: U256::from_be_hex(
-                "00000000FFFF0000000000000000000000000000000000000000000000000000",
-            ),
-            max_target_bytes: [
-                0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0,
-            ],
-            subsidy_halving_interval: 210000,
-            bip16_height: 173805,
-            bip34_height: 227931,
-            bip65_height: 388381,
-            bip66_height: 363725,
-            csv_height: 419328,
-            segwit_height: 481824,
-            taproot_activation_height: 709632,
-            // genesis_block_hash: [0x00; 32], // 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
-        },
+        Some(n) if matches!(n.as_bytes(), b"mainnet") => get_mainnet_params(),
+        Some(n) if matches!(n.as_bytes(), b"testnet4") => get_testnet4_params(),
+        Some(n) if matches!(n.as_bytes(), b"signet") => get_signet_params(),
+        Some(n) if matches!(n.as_bytes(), b"regtest") => get_regtest_params(),
+        None => get_mainnet_params(),
         _ => panic!("Unsupported network"),
     }
 };
+
+const fn get_mainnet_params() -> NetworkParams {
+    NetworkParams {
+        // Maximum difficulty bits (minimum difficulty)
+        max_bits: 0x1D00FFFF, // The original max target from Bitcoin's genesis block
+
+        // Maximum target value as a 256-bit integer (minimum difficulty)
+        max_target: U256::from_be_hex(
+            "00000000FFFF0000000000000000000000000000000000000000000000000000",
+        ),
+
+        // Same max target as above, but as a 32-byte array for convenience
+        max_target_bytes: [
+            0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ],
+
+        // Block reward halving occurs every 210,000 blocks (about 4 years)
+        subsidy_halving_interval: 210000,
+
+        // BIP-16 (Pay to Script Hash) activation height
+        bip16_height: 173805,
+
+        // BIP-34 (Block height in coinbase) activation height
+        bip34_height: 227931,
+
+        // BIP-65 (CHECKLOCKTIMEVERIFY) activation height
+        bip65_height: 388381,
+
+        // // BIP-66 (Strict DER signatures) activation height
+        // bip66_height: 363725,
+        bip68_height: 419328,
+        bip112_height: 419328,
+        bip113_height: 419328,
+
+        // Segregated Witness (BIP-141, BIP-143, BIP-144, BIP-145) activation height
+        bip141_height: 481824,
+
+        // Taproot (BIP-341, BIP-342) activation height
+        bip341_height: 709632,
+        // Genesis block hash (commented out for now)
+        // genesis_block_hash: [0x00; 32], // 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
+        assume_valid_height: 886157,
+    }
+}
+
+const fn get_testnet4_params() -> NetworkParams {
+    NetworkParams {
+        max_bits: 0x1D00FFFF,
+        max_target: U256::from_be_hex(
+            "00000000FFFF0000000000000000000000000000000000000000000000000000",
+        ),
+        max_target_bytes: [
+            0, 0, 0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ],
+
+        // Block reward halving occurs every 210,000 blocks (about 4 years)
+        subsidy_halving_interval: 210000,
+
+        // BIP-16 (Pay to Script Hash) activation height
+        bip16_height: 1,
+
+        // BIP-34 (Block height in coinbase) activation height
+        bip34_height: 1,
+
+        // BIP-65 (CHECKLOCKTIMEVERIFY) activation height
+        bip65_height: 1,
+
+        // // BIP-66 (Strict DER signatures) activation height
+        // bip66_height: 363725,
+        bip68_height: 1,
+        bip112_height: 1,
+        bip113_height: 1,
+
+        // Segregated Witness (BIP-141, BIP-143, BIP-144, BIP-145) activation height
+        bip141_height: 1,
+
+        // Taproot (BIP-341, BIP-342) activation height
+        bip341_height: 1,
+        // Genesis block hash (commented out for now)
+        // genesis_block_hash: [0x00; 32], // 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
+        assume_valid_height: 72600,
+    }
+}
+
+const fn get_signet_params() -> NetworkParams {
+    NetworkParams {
+        max_bits: 0x1E0377AE,
+        max_target: U256::from_be_hex(
+            "00000377AE000000000000000000000000000000000000000000000000000000",
+        ),
+        max_target_bytes: [
+            0, 0, 3, 119, 174, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0,
+        ],
+
+        // Block reward halving occurs every 210,000 blocks (about 4 years)
+        subsidy_halving_interval: 210000,
+
+        // BIP-16 (Pay to Script Hash) activation height
+        bip16_height: 1,
+
+        // BIP-34 (Block height in coinbase) activation height
+        bip34_height: 1,
+
+        // BIP-65 (CHECKLOCKTIMEVERIFY) activation height
+        bip65_height: 1,
+
+        // // BIP-66 (Strict DER signatures) activation height
+        // bip66_height: 363725,
+        bip68_height: 1,
+        bip112_height: 1,
+        bip113_height: 1,
+
+        // Segregated Witness (BIP-141, BIP-143, BIP-144, BIP-145) activation height
+        bip141_height: 1,
+
+        // Taproot (BIP-341, BIP-342) activation height
+        bip341_height: 1,
+        // Genesis block hash (commented out for now)
+        // genesis_block_hash: [0x00; 32], // 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
+        assume_valid_height: 237722,
+    }
+}
+
+const fn get_regtest_params() -> NetworkParams {
+    NetworkParams {
+        max_bits: 0x207FFFFF,
+        max_target: U256::from_be_hex(
+            "7FFFFF0000000000000000000000000000000000000000000000000000000000",
+        ),
+        max_target_bytes: [
+            127, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0,
+        ],
+
+        // Block reward halving occurs every 210,000 blocks (about 4 years)
+        subsidy_halving_interval: 150,
+
+        // BIP-16 (Pay to Script Hash) activation height
+        bip16_height: 1,
+
+        // BIP-34 (Block height in coinbase) activation height
+        bip34_height: 1,
+
+        // BIP-65 (CHECKLOCKTIMEVERIFY) activation height
+        bip65_height: 1,
+
+        // // BIP-66 (Strict DER signatures) activation height
+        // bip66_height: 363725,
+        bip68_height: 419328,
+        bip112_height: 1,
+        bip113_height: 1,
+
+        // Segregated Witness (BIP-141, BIP-143, BIP-144, BIP-145) activation height
+        bip141_height: 1,
+
+        // Taproot (BIP-341, BIP-342) activation height
+        bip341_height: 1,
+        // Genesis block hash (commented out for now)
+        // genesis_block_hash: [0x00; 32], // 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
+        assume_valid_height: 0,
+    }
+}

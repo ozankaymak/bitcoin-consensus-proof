@@ -7,31 +7,19 @@ use bitcoin_consensus_core::{
     UTXOInsertionUpdateProof,
 };
 use jmt::{proof::UpdateMerkleProof, KeyHash, RootHash, ValueHash};
-use jmt_host::rocks_db::RocksDbStorage;
+use rocks_db::RocksDbStorage;
 use sha2::Sha256;
 use tracing::{info, warn};
 
-pub mod jmt_host;
 pub mod mock_host;
+pub mod rocks_db;
 
 // Parse a block from a binary file
 pub fn parse_block_from_file(file_path: &str) -> Result<Block, anyhow::Error> {
-    info!("Parsing block from file: {}", file_path);
     let mut file = File::open(file_path)?;
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;
-    info!("  Read {} bytes from file", buffer.len());
-    info!("  Buffer :{:?}", buffer);
     let block: Block = bitcoin::consensus::deserialize(&buffer)?;
-    info!("  Block parsed successfully:");
-    info!("    Hash: {:?}", block.block_hash());
-    info!("    Version: {:?}", block.header.version);
-    info!("    Previous block: {:?}", block.header.prev_blockhash);
-    info!("    Merkle root: {:?}", block.header.merkle_root);
-    info!("    Timestamp: {}", block.header.time);
-    info!("    Bits: {:?}", block.header.bits);
-    info!("    Nonce: {}", block.header.nonce);
-    info!("    Transaction count: {}", block.txdata.len());
     Ok(block)
 }
 
@@ -252,4 +240,23 @@ pub fn insert_utxos_and_generate_update_proofs(
         update_proof: insertion_proof,
         new_root: root_after_insert,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::parse_block_from_file;
+
+    #[test]
+    fn test_read_blocks_from_file() -> Result<(), anyhow::Error> {
+        // Loop from 0 to 80000 (inclusive), testing 80001 blocks in total
+        for block_num in 0..=80000 {
+            let block_path = format!(
+                "../data/blocks/testnet4-blocks/testnet4_block_{}.bin",
+                block_num
+            );
+            let _block = parse_block_from_file(&block_path)?;
+        }
+        println!("Successfully parsed all the blocks!");
+        Ok(())
+    }
 }

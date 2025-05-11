@@ -19,7 +19,9 @@ pub const SEGWIT_MARKER: u8 = 0x00;
 /// input count follows.
 pub const SEGWIT_FLAG: u8 = 0x01;
 
-/// TODO: Add a description for this constant
+/// Magic bytes that must appear at the beginning of the witness commitment in the coinbase transaction.
+/// These specific bytes ([0xaa, 0x21, 0xa9, 0xed]) serve as an identifier for the witness commitment
+/// structure placed in an OP_RETURN output, allowing nodes to recognize and validate the commitment.
 pub const MAGIC_BYTES: [u8; 4] = [0xaa, 0x21, 0xa9, 0xed];
 
 /// Maximum allowed signature operation cost per block
@@ -39,7 +41,7 @@ pub const MAX_BLOCK_SIGOPS_COST: u32 = 80000;
 ///
 /// This 4MB weight limit translates to roughly 1MB of base data plus 3MB of
 /// witness data in the worst case.
-pub const MAX_BLOCK_WEIGHT: u32 = 4_000_000;
+pub const MAX_BLOCK_WEIGHT: usize = 4_000_000;
 
 /// The scale factor used to calculate weight for witness data
 ///
@@ -57,3 +59,12 @@ pub const WITNESS_SCALE_FACTOR: u32 = 4;
 /// This threshold was chosen because block heights will not reach this value for many decades,
 /// while UNIX timestamps start from January 1, 1970, and already exceed this value.
 pub const LOCKTIME_THRESHOLD: u32 = 500_000_000;
+
+// Constants for BIP-68 (Relative timelock)
+// These constants are used to decode and interpret the sequence field in transaction inputs
+
+/// Granularity for time-based relative timelocks (2^9 = 512 seconds, approx. 9 minutes)
+pub const SEQUENCE_LOCKTIME_GRANULARITY: u8 = 9;
+
+/// Mask to extract the actual locktime value from a sequence number
+pub const SEQUENCE_LOCKTIME_MASK: u32 = 0x0000FFFF;

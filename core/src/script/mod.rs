@@ -7,7 +7,6 @@ pub mod utils;
 extern crate alloc;
 extern crate core;
 
-use alloc::borrow::Cow;
 use core::cmp;
 use utils::ConditionStack;
 
@@ -16,7 +15,7 @@ use bitcoin::hashes::{hash160, ripemd160, sha1, sha256, sha256d, Hash};
 use bitcoin::opcodes::{all::*, Opcode};
 use bitcoin::script::{self, Instruction, Instructions, Script, ScriptBuf};
 use bitcoin::sighash::SighashCache;
-use bitcoin::taproot::{self, TapLeafHash};
+use bitcoin::taproot::TapLeafHash;
 use bitcoin::transaction::{self, Transaction, TxOut};
 
 pub use error::{Error, ExecError};
@@ -51,13 +50,6 @@ const VALIDATION_WEIGHT_PER_SIGOP_PASSED: i64 = 50;
 // Maximum number of public keys per multisig
 const _MAX_PUBKEYS_PER_MULTISIG: i64 = 20;
 
-/// Used to enable experimental script features.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Experimental {
-    /// Enable an experimental implementation of OP_CAT.
-    pub op_cat: bool,
-}
-
 /// Used to fine-tune different variables during execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
@@ -71,8 +63,6 @@ pub struct Options {
     pub verify_minimal_if: bool,
     /// Enfore a strict limit of 1000 total stack items.
     pub enforce_stack_limit: bool,
-
-    pub experimental: Experimental,
 }
 
 impl Default for Options {
@@ -83,7 +73,6 @@ impl Default for Options {
             verify_csv: true,
             verify_minimal_if: true,
             enforce_stack_limit: true,
-            experimental: Experimental { op_cat: true },
         }
     }
 }
@@ -520,10 +509,7 @@ impl Exec {
                 }
 
                 match op {
-                    OP_CAT
-                        if !self.opt.experimental.op_cat
-                            || self.ctx != ExecCtx::TaprootScriptSpend =>
-                    {
+                    OP_CAT => {
                         return self.failop(ExecError::DisabledOpcode, op);
                     }
                     OP_SUBSTR | OP_LEFT | OP_RIGHT | OP_INVERT | OP_AND | OP_OR | OP_XOR
@@ -838,18 +824,6 @@ impl Exec {
                 self.stack.push(x2.clone());
                 self.stack.push(x1);
                 self.stack.push(x2);
-            }
-
-            OP_CAT if self.opt.experimental.op_cat && self.ctx == ExecCtx::TaprootScriptSpend => {
-                // (x1 x2 -- x1|x2)
-                self.stack.needn(2)?;
-                let x2 = self.stack.popstr().unwrap();
-                let x1 = self.stack.popstr().unwrap();
-                let ret: Vec<u8> = x1.into_iter().chain(x2).collect();
-                if ret.len() > MAX_SCRIPT_ELEMENT_SIZE {
-                    return Err(ExecError::PushSize);
-                }
-                self.stack.pushstr(&ret);
             }
 
             OP_SIZE => {

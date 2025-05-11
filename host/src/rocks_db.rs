@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use borsh::BorshDeserialize;
 use rocksdb::{ColumnFamilyDescriptor, IteratorMode, Options, WriteBatch, DB};
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::info;
 
 use jmt::{
     storage::{
@@ -110,7 +110,7 @@ impl RocksDbStorage {
                     }
                 }
             }
-            println!();
+            // println!();
         }
         Ok(())
     }

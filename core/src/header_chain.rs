@@ -115,7 +115,6 @@ impl CircuitBlockHeader {
     ///
     /// A 32-byte array containing the block hash
     pub fn compute_block_hash(&self) -> [u8; 32] {
-        // println!("[DEBUG] Computing block hash");
         // First SHA-256 round - hash all header fields in order
         let mut hasher = Sha256::new();
         hasher.update(self.version.to_le_bytes()); // 4 bytes, little-endian
@@ -132,7 +131,6 @@ impl CircuitBlockHeader {
             .finalize()
             .try_into()
             .expect("SHA256 should produce a 32-byte output");
-        // println!("[DEBUG] Block Hash: {:?}", result);
         result
     }
 }
@@ -228,7 +226,6 @@ impl HeaderChainState {
     ///
     /// A new HeaderChainState with default values
     pub fn new() -> Self {
-        // println!("[DEBUG] Creating new HeaderChainState");
         let result = HeaderChainState {
             block_height: u32::MAX, // Will wrap to 0 on first block
             total_work: [0u8; 32],
@@ -238,8 +235,18 @@ impl HeaderChainState {
             prev_11_timestamps: [0u32; 11],
             block_time: 0,
         };
-        // println!("[DEBUG] New HeaderChainState: {:?}", result);
         result
+    }
+
+    /// Returns the block subsidy amount in satoshis
+    pub fn calculate_block_subsidy(&self) -> u64 {
+        5_000_000_000 >> (self.block_height / 210_000)
+    }
+
+    /// Returns the median time of the last 11 blocks, which should increase monotonically
+    pub fn get_median_time_past(&self) -> u32 {
+        let median_time = median(self.prev_11_timestamps);
+        median_time
     }
 
     /// Verifies a block header and updates the chain state
@@ -269,8 +276,6 @@ impl HeaderChainState {
     /// - If the block hash doesn't meet the required difficulty target
     /// - If the block timestamp is invalid
     pub fn verify_and_apply_header(&mut self, block_header: &CircuitBlockHeader) {
-        // println!("[DEBUG] Verifying and applying block header");
-
         // Determine the current target based on network rules
         let mut current_target_bytes = if IS_REGTEST {
             // Regtest always uses the maximum difficulty target
@@ -388,7 +393,6 @@ impl HeaderChainState {
 
         // Update the total accumulated work
         self.total_work = current_work.to_be_bytes();
-        // println!("[DEBUG] Updated HeaderChainState: {:?}", self);
     }
 }
 
@@ -406,12 +410,10 @@ impl HeaderChainState {
 ///
 /// The median value from the array (middle value after sorting)
 fn median(arr: [u32; 11]) -> u32 {
-    // println!("[DEBUG] Calculating median of timestamps");
     let mut sorted_arr = arr;
     sorted_arr.sort_unstable();
     // For 11 elements, the median is the 6th element (index 5)
     let result = sorted_arr[5];
-    // println!("[DEBUG] Median: {}", result);
     result
 }
 
@@ -430,11 +432,9 @@ fn median(arr: [u32; 11]) -> u32 {
 ///
 /// `true` if the timestamp is valid, `false` otherwise
 fn validate_timestamp(block_time: u32, prev_11_timestamps: [u32; 11]) -> bool {
-    // println!("[DEBUG] Validating block timestamp");
     let median_time = median(prev_11_timestamps);
     // The block timestamp must be strictly greater than the median time
     let result = block_time > median_time;
-    // println!("[DEBUG] Timestamp Valid: {}", result);
     result
 }
 
@@ -456,7 +456,6 @@ fn validate_timestamp(block_time: u32, prev_11_timestamps: [u32; 11]) -> bool {
 ///
 /// A 32-byte array containing the full 256-bit target
 pub fn bits_to_target(bits: u32) -> [u8; 32] {
-    // println!("[DEBUG] Converting bits to target");
     let size = (bits >> 24) as usize; // Get the exponent (first byte)
     let mantissa = bits & 0x00ffffff; // Get the mantissa (last 3 bytes)
 
@@ -469,7 +468,6 @@ pub fn bits_to_target(bits: u32) -> [u8; 32] {
         U256::from(mantissa) << (8 * (size - 3))
     };
     let result = target.to_be_bytes();
-    // println!("[DEBUG] Target: {:?}", result);
     result
 }
 
@@ -487,7 +485,6 @@ pub fn bits_to_target(bits: u32) -> [u8; 32] {
 ///
 /// The compact 32-bit representation of the target
 fn target_to_bits(target: &[u8; 32]) -> u32 {
-    // println!("[DEBUG] Converting target to bits");
     let target_u256 = U256::from_be_slice(target);
     let target_bits = target_u256.bits(); // Get the bit length
 
@@ -502,7 +499,6 @@ fn target_to_bits(target: &[u8; 32]) -> u32 {
     compact_target[3] = target[size + 1 as usize]; // Mantissa byte 3
 
     let result = u32::from_be_bytes(compact_target);
-    // println!("[DEBUG] Bits: {}", result);
     result
 }
 
@@ -530,7 +526,6 @@ fn calculate_new_difficulty(
     last_timestamp: u32,
     current_target: u32,
 ) -> [u8; 32] {
-    // println!("[DEBUG] Calculating new difficulty");
     // Calculate actual time taken to mine the epoch
     let mut actual_timespan = last_timestamp - epoch_start_time;
 
@@ -558,7 +553,6 @@ fn calculate_new_difficulty(
     }
 
     let result = new_target.to_be_bytes();
-    // println!("[DEBUG] New Difficulty: {:?}", result);
     result
 }
 
@@ -581,7 +575,6 @@ fn calculate_new_difficulty(
 ///
 /// If the hash is greater than the target (block doesn't meet difficulty requirement)
 fn check_hash_valid(hash: &[u8; 32], target_bytes: &[u8; 32]) {
-    // println!("[DEBUG] Checking hash validity");
     for i in 0..32 {
         // Compare bytes in reverse order (from most to least significant)
         if hash[31 - i] < target_bytes[i] {
@@ -593,7 +586,6 @@ fn check_hash_valid(hash: &[u8; 32], target_bytes: &[u8; 32]) {
         }
         // If bytes are equal, continue to the next byte
     }
-    // println!("[DEBUG] Hash is valid");
 }
 
 /// Calculates the work value from a target
@@ -612,13 +604,11 @@ fn check_hash_valid(hash: &[u8; 32], target_bytes: &[u8; 32]) {
 ///
 /// The work value as a 256-bit number
 fn calculate_work(target: &[u8; 32]) -> U256 {
-    // println!("[DEBUG] Calculating work from target");
     let target = U256::from_be_slice(target);
     // Add 1 to the target to handle the case where target = 0
     let target_plus_one = target.saturating_add(&U256::ONE);
     // Calculate work as 2^256 / (target + 1)
     let result = U256::MAX.wrapping_div(&target_plus_one);
-    // println!("[DEBUG] Work: {:?}", result);
     result
 }
 

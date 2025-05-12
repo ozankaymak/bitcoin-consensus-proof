@@ -9,6 +9,7 @@ use bitcoin_consensus_core::{
 use jmt::{proof::UpdateMerkleProof, KeyHash, RootHash, ValueHash};
 use rocks_db::RocksDbStorage;
 use sha2::Sha256;
+use sqlite::ProofEntry;
 use tracing::{info, warn};
 
 pub mod mock_host;
@@ -241,6 +242,17 @@ pub fn insert_utxos_and_generate_update_proofs(
         update_proof: insertion_proof,
         new_root: root_after_insert,
     })
+}
+
+/// This function retrieves the last active proof from the SQLite database.
+/// When there are no reorgs, it is not called, as we will already have the last active proof.
+/// When there are reorgs, we need to call this function to get the last active proof of the
+/// newly activated chain. It will go up the chain until it finds the saved proof belonging
+/// to that chain.
+pub fn retrieve_last_proof_for_tip(
+    block_hash: [u8; 32],
+) -> Result<Option<ProofEntry>, Box<dyn std::error::Error>> {
+    unimplemented!()
 }
 
 #[cfg(test)]

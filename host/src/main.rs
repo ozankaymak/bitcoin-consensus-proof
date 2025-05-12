@@ -12,7 +12,7 @@ use bitcoin_consensus_core::{
 use borsh::BorshDeserialize;
 use host::{
     delete_utxo_and_generate_update_proof, insert_utxos_and_generate_update_proofs,
-    jmt_host::rocks_db::RocksDbStorage, parse_block_from_file,
+    parse_block_from_file, rocks_db::RocksDbStorage,
 };
 use jmt::RootHash;
 use risc0_zkvm::{compute_image_id, default_prover, ExecutorEnv, ProverOpts, Receipt};
@@ -556,9 +556,9 @@ mod tests {
     use borsh::BorshDeserialize;
     use host::{
         delete_utxo_and_generate_update_proof, insert_utxos_and_generate_update_proofs,
-        jmt_host::rocks_db::RocksDbStorage,
         mock_host::{MockZkvmHost, ZkvmHost},
         parse_block_from_file,
+        rocks_db::RocksDbStorage,
     };
     use jmt::RootHash;
     use risc0_zkvm::{compute_image_id, Receipt};
@@ -624,7 +624,7 @@ mod tests {
             info!("Processing batch {}/{}", batch_num, num_batches);
             info!("==================================================");
 
-            info!("Starting block height: {}", current_height);
+            println!("Starting block height: {}", current_height);
 
             let mut blocks = Vec::new();
             let mut batch_created_utxos = std::collections::BTreeMap::new();

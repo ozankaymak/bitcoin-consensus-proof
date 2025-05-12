@@ -50,7 +50,8 @@ use transaction::CircuitTransaction;
 use utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXOSetGuest, UTXO};
 use witness::{
     get_non_standard_witness, get_p2pk_witness, get_p2pkh_witness,
-    get_wrapped_p2sh_witness_and_redeem_script, split_p2sh_witness_and_redeem_script,
+    get_prev_txout_type_with_script_and_witness, get_wrapped_p2sh_witness_and_redeem_script,
+    split_p2sh_witness_and_redeem_script,
 };
 use zkvm::ZkvmGuest;
 
@@ -255,6 +256,10 @@ impl BitcoinState {
         for block in input.blocks.iter() {
             // Before validating header, know which BIP flags are active in the next block
             let expected_next_height = self.header_chain_state.block_height.wrapping_add(1);
+            // println!(
+            //     "[INFO] Verifying block at height {}",
+            //     expected_next_height
+            // );
 
             let bip_flags = softfork_manager::BIPFlags::at_height(expected_next_height);
 
@@ -318,6 +323,7 @@ impl BitcoinState {
                     sigops * WITNESS_SCALE_FACTOR,
                     MAX_BLOCK_SIGOPS_COST
                 );
+                println!("Block height: {}", self.header_chain_state.block_height);
                 panic!("Block sigops cost exceeds limits");
             }
         }
@@ -364,6 +370,15 @@ impl BitcoinState {
         let is_coinbase = transaction.is_coinbase();
         // Coinbase transaction checks
         if is_coinbase {
+            // Sigops count for coinbase transactions
+            let tx_sigops_count = transaction.total_sigop_cost(|outpoint: &OutPoint| {
+                transaction
+                    .input
+                    .iter()
+                    .position(|input| &input.previous_output == outpoint)
+                    .and_then(|_| None)
+            }) as u32;
+            *total_sigops += tx_sigops_count;
         } else {
             // println!("[INFO] Non-coinbase transaction - Checking previous outputs");
             for tx_input in transaction.input.iter() {
@@ -508,7 +523,7 @@ impl BitcoinState {
 ///
 /// * `guest` - Interface to the ZKVM guest environment
 pub fn bitcoin_consensus_circuit(guest: &impl ZkvmGuest) {
-    let start = risc0_zkvm::guest::env::cycle_count();
+    // let start = risc0_zkvm::guest::env::cycle_count();
 
     let mut input: BitcoinConsensusCircuitInput = guest.read_from_host();
 
@@ -539,257 +554,6 @@ pub fn bitcoin_consensus_circuit(guest: &impl ZkvmGuest) {
         bitcoin_state,
     });
 
-    let end = risc0_zkvm::guest::env::cycle_count();
-    println!("{} cycles", end - start);
-}
-
-fn get_prev_txout_type_with_script_and_witness(
-    transaction: &CircuitTransaction,
-    prev_txouts: &Vec<bitcoin::TxOut>,
-    input_idx: usize,
-) -> (ExecCtx, ScriptBuf, Vec<Vec<u8>>) {
-    // Get the previous transaction output type
-    let prev_txout_type = get_txout_type(&prev_txouts[input_idx]);
-
-    // Extract witness data
-    let witness_vec = transaction.inner().input[input_idx]
-        .witness
-        .iter()
-        .map(|w| w.to_vec())
-        .collect::<Vec<_>>();
-
-    match prev_txout_type {
-        script::txout::TxoutType::NonStandard => (
-            ExecCtx::Legacy,
-            prev_txouts[input_idx].script_pubkey.clone(),
-            get_non_standard_witness(transaction.input[input_idx].script_sig.clone()),
-        ),
-        script::txout::TxoutType::P2A => (
-            ExecCtx::Legacy,
-            prev_txouts[input_idx].script_pubkey.clone(),
-            get_non_standard_witness(transaction.input[input_idx].script_sig.clone()),
-        ),
-        script::txout::TxoutType::P2PK => {
-            // P2PK: <pubkey> OP_CHECKSIG
-            // The witness is the signature
-            (
-                ExecCtx::Legacy,
-                prev_txouts[input_idx].script_pubkey.clone(),
-                get_p2pk_witness(transaction.input[input_idx].script_sig.clone()),
-            )
-        }
-        script::txout::TxoutType::P2PKH => {
-            // P2PKH: OP_DUP OP_HASH160 <pubkeyhash> OP_EQUALVERIFY OP_CHECKSIG
-            // The witness is [signature, pubkey]
-            (
-                ExecCtx::Legacy,
-                prev_txouts[input_idx].script_pubkey.clone(),
-                get_p2pkh_witness(transaction.input[input_idx].script_sig.clone()),
-            )
-        }
-        script::txout::TxoutType::P2SH => {
-            // P2SH: OP_HASH160 <scripthash> OP_EQUAL
-            if !witness_vec.is_empty() {
-                // This might be P2SH-wrapped segwit
-                let script_sig = transaction.input[input_idx].script_sig.clone();
-
-                // Check if it's a wrapped P2WSH or P2WPKH
-                if script_sig[1..].is_p2wsh() {
-                    let (witness_script, redeem_script) =
-                        get_wrapped_p2sh_witness_and_redeem_script(
-                            transaction.input[input_idx].witness.clone(),
-                            script_sig.clone(),
-                        );
-
-                    // Verify script hash match
-                    let redeem_script_hash =
-                        hash160::Hash::hash(script_sig[1..].as_bytes()).to_byte_array();
-                    let expected_script_hash =
-                        prev_txouts[input_idx].script_pubkey[2..22].as_bytes();
-                    assert_eq!(
-                        redeem_script_hash, expected_script_hash,
-                        "P2WSH wrapped in P2SH script hash mismatch"
-                    );
-
-                    (ExecCtx::P2WSHWrappedP2SH, redeem_script, witness_script)
-                } else if script_sig[1..].is_p2wpkh() {
-                    let (witness_script, redeem_script) =
-                        get_wrapped_p2sh_witness_and_redeem_script(
-                            transaction.input[input_idx].witness.clone(),
-                            script_sig.clone(),
-                        );
-
-                    // Verify script hash match
-                    let redeem_script_hash =
-                        hash160::Hash::hash(script_sig[1..].as_bytes()).to_byte_array();
-                    let expected_script_hash =
-                        prev_txouts[input_idx].script_pubkey[2..22].as_bytes();
-                    assert_eq!(
-                        redeem_script_hash, expected_script_hash,
-                        "P2WPKH wrapped in P2SH script hash mismatch"
-                    );
-
-                    (ExecCtx::P2WPKHWrappedP2SH, redeem_script, witness_script)
-                } else {
-                    // Regular P2SH with witness data
-                    let (witness_script, redeem_script) = split_p2sh_witness_and_redeem_script(
-                        transaction.input[input_idx].script_sig.clone(),
-                    );
-
-                    // Verify script hash match
-                    let redeem_script_hash =
-                        hash160::Hash::hash(&redeem_script.as_bytes()).to_byte_array();
-                    let expected_script_hash =
-                        prev_txouts[input_idx].script_pubkey[2..22].as_bytes();
-                    assert_eq!(
-                        redeem_script_hash, expected_script_hash,
-                        "P2SH script hash mismatch"
-                    );
-
-                    (ExecCtx::Legacy, redeem_script, witness_script)
-                }
-            } else {
-                // Standard P2SH
-                let (witness_script, redeem_script) = split_p2sh_witness_and_redeem_script(
-                    transaction.input[input_idx].script_sig.clone(),
-                );
-
-                // Verify script hash match
-                let redeem_script_hash =
-                    hash160::Hash::hash(&redeem_script.as_bytes()).to_byte_array();
-                let expected_script_hash = prev_txouts[input_idx].script_pubkey[2..22].as_bytes();
-                assert_eq!(
-                    redeem_script_hash, expected_script_hash,
-                    "P2SH script hash mismatch"
-                );
-
-                (ExecCtx::Legacy, redeem_script, witness_script)
-            }
-        }
-        script::txout::TxoutType::MultiSig => {
-            // MultiSig: m <pubkey1> <pubkey2> ... <pubkeyn> n OP_CHECKMULTISIG
-            // The script_sig contains: OP_0 <sig1> <sig2> ... <sigm>
-            let script_sig = transaction.input[input_idx].script_sig.clone();
-
-            // For MultiSig, we use the script_pubkey directly from prevout
-            let multisig_script = prev_txouts[input_idx].script_pubkey.clone();
-
-            // Extract signatures from the script_sig
-            // Using the same helper function as seen in the test examples
-            let witness_sigs = get_non_standard_witness(script_sig);
-
-            // Return the execution context for Legacy scripts, multisig script, and witness signatures
-            (ExecCtx::Legacy, multisig_script, witness_sigs)
-        }
-
-        script::txout::TxoutType::NullData => {
-            // OP_RETURN data, not spendable
-            unimplemented!()
-        }
-        script::txout::TxoutType::P2WSH => {
-            // P2WSH: 0 <32-byte-hash>
-            // The witness is [sig1, sig2, ..., script]
-            let mut witness_items = witness_vec.clone();
-            if !witness_items.is_empty() {
-                let script_bytes = witness_items.pop().unwrap();
-                let script = ScriptBuf::from_bytes(script_bytes.clone());
-
-                // Verify script hash match
-                let script_hash = sha2::Sha256::hash(&script_bytes);
-                let expected_script_hash = &prev_txouts[input_idx].script_pubkey.as_bytes()[2..34];
-                assert_eq!(
-                    script_hash, expected_script_hash,
-                    "P2WSH script hash mismatch"
-                );
-
-                (ExecCtx::SegwitV0P2WSH, script, witness_items)
-            } else {
-                panic!("P2WSH witness is empty")
-            }
-        }
-        script::txout::TxoutType::P2WPKH => {
-            // P2WPKH: 0 <20-byte-key-hash>
-            // The witness is [signature, pubkey]
-            // For P2WPKH, we need to construct the P2PKH script from the key hash
-            if witness_vec.len() >= 2 {
-                let pubkey = &witness_vec[1];
-
-                // Verify key hash match
-                let pubkey_hash = hash160::Hash::hash(pubkey).to_byte_array();
-                let expected_pubkey_hash = &prev_txouts[input_idx].script_pubkey.as_bytes()[2..22];
-                assert_eq!(
-                    pubkey_hash, expected_pubkey_hash,
-                    "P2WPKH key hash mismatch"
-                );
-
-                let p2pkh_script =
-                    ScriptBuf::new_p2pkh(&PubkeyHash::from_slice(expected_pubkey_hash).unwrap());
-                (ExecCtx::SegwitV0P2WPKH, p2pkh_script, witness_vec)
-            } else {
-                panic!("P2WPKH witness does not contain pubkey");
-            }
-        }
-        script::txout::TxoutType::P2TR => {
-            // P2TR: Taproot output (SegWit v1)
-            // 1-byte: 0x51 (OP_1)
-            // 32-bytes: x-only public key
-
-            // Get the x-only pubkey from the script
-            let x_only_pubkey_bytes: [u8; 32] = prev_txouts[input_idx].script_pubkey.as_bytes()
-                [2..34]
-                .try_into()
-                .unwrap();
-
-            // Check if it's a key path spend or script path spend
-            if witness_vec.len() == 1 {
-                // Key path spend: The witness contains only the signature
-                // For key path spending, we construct a simple script: <x_only_pubkey> OP_CHECKSIG
-                let key_script = ScriptBuf::builder()
-                    .push_slice(x_only_pubkey_bytes)
-                    .push_opcode(OP_CHECKSIG)
-                    .into_script();
-
-                (ExecCtx::TaprootKeySpend, key_script, witness_vec)
-            } else {
-                // Script path spend: The witness contains [signature(s), unlock_script, control_block]
-                // Extract the control block and unlock script from the witness
-                let mut script_witness = witness_vec.clone();
-
-                // The last item is the control block
-                let control_block_bytes = script_witness.pop().unwrap();
-
-                // Parse the control block
-                let control_block = ControlBlock::decode(&control_block_bytes)
-                    .expect("Invalid control block in P2TR witness");
-
-                // The second-to-last item is the unlock script (tapscript)
-                let unlock_script_bytes = script_witness.pop().unwrap();
-                let unlock_script = ScriptBuf::from_bytes(unlock_script_bytes);
-
-                // Get the x-only pubkey from the script
-                let output_xonly_pubkey = XOnlyPublicKey::from_slice(&x_only_pubkey_bytes)
-                    .expect("Invalid x-only public key in P2TR output");
-
-                // Verify the taproot commitment
-                let secp = secp256k1::Secp256k1::new();
-                let commitment_result = control_block.verify_taproot_commitment(
-                    &secp,
-                    output_xonly_pubkey,
-                    &unlock_script,
-                );
-
-                assert!(
-                    commitment_result,
-                    "P2TR control block verification failed: {:?}",
-                    commitment_result
-                );
-
-                // Return the execution context with script path spending
-                (ExecCtx::TaprootScriptSpend, unlock_script, script_witness)
-            }
-        }
-        script::txout::TxoutType::WitnessUnknown => {
-            unimplemented!()
-        }
-    }
+    // let end = risc0_zkvm::guest::env::cycle_count();
+    // println!("{} cycles", end - start);
 }

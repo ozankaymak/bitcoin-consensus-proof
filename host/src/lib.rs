@@ -13,6 +13,7 @@ use tracing::{info, warn};
 
 pub mod mock_host;
 pub mod rocks_db;
+pub mod sqlite;
 
 // Parse a block from a binary file
 pub fn parse_block_from_file(file_path: &str) -> Result<Block, anyhow::Error> {

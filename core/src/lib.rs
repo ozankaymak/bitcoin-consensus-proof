@@ -3,9 +3,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::vec;
 
 use bitcoin::hashes::hash160;
-use bitcoin::opcodes::all::OP_CHECKSIG;
 use bitcoin::script::Builder;
-use bitcoin::taproot::{ControlBlock, LeafVersion};
+use bitcoin::taproot::LeafVersion;
 /// # Bitcoin Consensus Proof Core Library
 ///
 /// This library implements Bitcoin's consensus rules in a manner compatible with
@@ -35,24 +34,19 @@ use bitcoin::taproot::{ControlBlock, LeafVersion};
 /// This library is designed to run within a zero-knowledge virtual machine (ZKVM)
 /// to produce succinct proofs of Bitcoin consensus rule adherence.
 use bitcoin::{hashes::Hash, OutPoint};
-use bitcoin::{PubkeyHash, ScriptBuf, TapLeafHash, Witness, XOnlyPublicKey};
+use bitcoin::{ScriptBuf, TapLeafHash};
 use block::CircuitBlock;
 use borsh::{BorshDeserialize, BorshSerialize};
 use constants::{MAX_BLOCK_SIGOPS_COST, WITNESS_SCALE_FACTOR};
 use header_chain::HeaderChainState;
+use jmt::ValueHash;
 use jmt::{proof::UpdateMerkleProof, KeyHash, RootHash};
-use jmt::{SimpleHasher, ValueHash};
-use script::txout::get_txout_type;
 use script::{Exec, ExecCtx, Options, TxTemplate};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use transaction::CircuitTransaction;
 use utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXOSetGuest, UTXO};
-use witness::{
-    get_non_standard_witness, get_p2pk_witness, get_p2pkh_witness,
-    get_prev_txout_type_with_script_and_witness, get_wrapped_p2sh_witness_and_redeem_script,
-    split_p2sh_witness_and_redeem_script,
-};
+use witness::get_prev_txout_type_with_script_and_witness;
 use zkvm::ZkvmGuest;
 
 /// Bitcoin Merkle tree implementation (transaction hashing, block commitments)

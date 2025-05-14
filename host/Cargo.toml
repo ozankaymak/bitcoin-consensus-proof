@@ -31,8 +31,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenv = "0.15.0"
 rusqlite = { version="0.35.0", features=["bundled"] }
 chrono = "0.4.41"
+bitcoincore-rpc.workspace = true
+num_cpus = "1.16.0"
 
 [dev-dependencies]
 hex-literal = "0.4.1"
-bitcoin = { version = "0.32.5", features = ["rand"] }
 

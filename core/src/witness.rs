@@ -384,10 +384,11 @@ mod tests {
     use bitcoin::{PubkeyHash, ScriptBuf, XOnlyPublicKey};
 
     use crate::script::{Exec, ExecCtx, TxTemplate};
-    use crate::{
+    use crate::witness::{
         get_non_standard_witness, get_p2pk_witness, get_p2pkh_witness,
-        get_wrapped_p2sh_witness_and_redeem_script, split_p2sh_witness_and_redeem_script, OPTIONS,
+        get_wrapped_p2sh_witness_and_redeem_script, split_p2sh_witness_and_redeem_script,
     };
+    use crate::OPTIONS;
 
     #[test]
     fn test_p2ms_1_of_1() {

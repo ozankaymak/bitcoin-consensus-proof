@@ -541,7 +541,7 @@ fn process_batch(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, env, fs, path::Path, thread, time::Duration};
+    use std::{collections::VecDeque, env, fs};
 
     use bitcoin::hashes::Hash;
     use bitcoin_consensus_core::{
@@ -561,13 +561,10 @@ mod tests {
         rocks_db::RocksDbStorage,
     };
     use jmt::RootHash;
-    use risc0_zkvm::{compute_image_id, Receipt};
     use std::time::Instant;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::TempDir;
     use tracing::{info, warn, Level};
     use tracing_subscriber::EnvFilter;
-
-    use crate::{process_batch, BITCOIN_GUEST_ELF, DB_PATH, NETWORK};
 
     #[ignore = "This tests e2e and takes a long time to run"]
     #[test]

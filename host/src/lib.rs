@@ -258,6 +258,8 @@ pub async fn retrieve_proof_for_block_hash_with_blocks_to_prove(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use anyhow::Result;
 

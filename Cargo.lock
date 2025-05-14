@@ -487,9 +487,9 @@ dependencies = [
 
 [[package]]
 name = "bitcoin"
-version = "0.32.5"
+version = "0.32.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce6bc65742dea50536e35ad42492b234c27904a27f0abdcbce605015cb4ea026"
+checksum = "ad8929a18b8e33ea6b3c09297b687baaa71fb1b97353243a3f1029fad5c59c5b"
 dependencies = [
  "base58ck",
  "bech32",
@@ -508,7 +508,7 @@ name = "bitcoin-consensus-core"
 version = "0.1.0"
 dependencies = [
  "bincode",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "borsh",
  "crypto-bigint 0.5.2",
  "hex",
@@ -582,7 +582,7 @@ name = "bitcoincore-rpc-json"
 version = "0.18.0"
 source = "git+https://github.com/chainwayxyz/rust-bitcoincore-rpc.git?rev=2e8f9f1#2e8f9f182582cfea87d1f86c379627bfab2bf2f5"
 dependencies = [
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "serde",
  "serde_json",
 ]
@@ -1724,7 +1724,7 @@ name = "host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bitcoin 0.32.5",
+ "bitcoin 0.32.6",
  "bitcoin-consensus-core",
  "bitcoincore-rpc",
  "blake3",
@@ -1750,6 +1750,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
 ]

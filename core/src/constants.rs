@@ -20,9 +20,9 @@ pub const SEGWIT_MARKER: u8 = 0x00;
 pub const SEGWIT_FLAG: u8 = 0x01;
 
 /// Magic bytes that must appear at the beginning of the witness commitment in the coinbase transaction.
-/// These specific bytes ([0xaa, 0x21, 0xa9, 0xed]) serve as an identifier for the witness commitment
+/// These specific bytes ([0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed]) serve as an identifier for the witness commitment
 /// structure placed in an OP_RETURN output, allowing nodes to recognize and validate the commitment.
-pub const MAGIC_BYTES: [u8; 4] = [0xaa, 0x21, 0xa9, 0xed];
+pub const MAGIC_BYTES: [u8; 6] = [0x6a, 0x24, 0xaa, 0x21, 0xa9, 0xed];
 
 /// Maximum allowed signature operation cost per block
 ///

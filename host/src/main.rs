@@ -12,7 +12,7 @@ use bitcoin_consensus_core::{
 use borsh::BorshDeserialize;
 use host::{
     delete_utxo_and_generate_update_proof, insert_utxos_and_generate_update_proofs,
-    jmt_host::rocks_db::RocksDbStorage, parse_block_from_file,
+    parse_block_from_file, rocks_db::RocksDbStorage,
 };
 use jmt::RootHash;
 use risc0_zkvm::{compute_image_id, default_prover, ExecutorEnv, ProverOpts, Receipt};
@@ -541,7 +541,7 @@ fn process_batch(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, env, fs, path::Path, thread, time::Duration};
+    use std::{collections::VecDeque, env, fs};
 
     use bitcoin::hashes::Hash;
     use bitcoin_consensus_core::{
@@ -556,18 +556,15 @@ mod tests {
     use borsh::BorshDeserialize;
     use host::{
         delete_utxo_and_generate_update_proof, insert_utxos_and_generate_update_proofs,
-        jmt_host::rocks_db::RocksDbStorage,
         mock_host::{MockZkvmHost, ZkvmHost},
         parse_block_from_file,
+        rocks_db::RocksDbStorage,
     };
     use jmt::RootHash;
-    use risc0_zkvm::{compute_image_id, Receipt};
     use std::time::Instant;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::TempDir;
     use tracing::{info, warn, Level};
     use tracing_subscriber::EnvFilter;
-
-    use crate::{process_batch, BITCOIN_GUEST_ELF, DB_PATH, NETWORK};
 
     #[ignore = "This tests e2e and takes a long time to run"]
     #[test]
@@ -624,7 +621,7 @@ mod tests {
             info!("Processing batch {}/{}", batch_num, num_batches);
             info!("==================================================");
 
-            info!("Starting block height: {}", current_height);
+            println!("Starting block height: {}", current_height);
 
             let mut blocks = Vec::new();
             let mut batch_created_utxos = std::collections::BTreeMap::new();

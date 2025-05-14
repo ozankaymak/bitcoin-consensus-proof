@@ -240,7 +240,7 @@ impl HeaderChainState {
 
     /// Returns the block subsidy amount in satoshis
     pub fn calculate_block_subsidy(&self) -> u64 {
-        5_000_000_000 >> (self.block_height / 210_000)
+        5_000_000_000 >> (self.block_height / NETWORK_PARAMS.subsidy_halving_interval)
     }
 
     /// Returns the median time of the last 11 blocks, which should increase monotonically

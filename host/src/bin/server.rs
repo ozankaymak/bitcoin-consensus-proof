@@ -21,7 +21,7 @@ use host::{
 use bitcoin::hashes::Hash;
 use host::{delete_utxo_and_generate_update_proof, insert_utxos_and_generate_update_proofs};
 use jmt::{proof::UpdateMerkleProof, RootHash};
-use risc0_zkvm::{compute_image_id, default_prover, ExecutorEnv, ProverOpts, Receipt};
+use risc0_zkvm::{compute_image_id, default_prover, ExecutorEnv, ProveInfo, ProverOpts, Receipt};
 use std::{
     collections::{BTreeMap, VecDeque},
     env, fs,
@@ -243,7 +243,7 @@ async fn load_initial_server_state(
         let proof_db_locked = proof_db.lock().await;
         match proof_db_locked.find_proof_by_hash(&current_search_hash.to_byte_array()) {
             Ok(Some(entry)) => {
-                info!("Found proof in DB for block {} at height {}. JMT version: {}. This will be our resumption point.", 
+                info!("Found proof in DB for block {} at height {}. JMT version: {}. This will be our resumption point.",
                     current_search_hash, entry.block_height, entry.last_version);
                 found_proof_entry = Some(entry);
                 drop(proof_db_locked);
@@ -554,7 +554,7 @@ async fn orchestrator_task(
                         let mut temp_bytes = Vec::new();
                         if single_rpc_block.consensus_encode(&mut temp_bytes).is_ok() {
                             if temp_bytes.len() > app_state.config.max_batch_size_bytes {
-                                error!("(Catch-up) Single block at height {} (size: {}) exceeds max_batch_size ({}). Halting.", 
+                                error!("(Catch-up) Single block at height {} (size: {}) exceeds max_batch_size ({}). Halting.",
                                     current_height_to_process, temp_bytes.len(), app_state.config.max_batch_size_bytes);
                                 return Err(anyhow!(
                                     "Block at height {} too large for batch size.",
@@ -579,7 +579,7 @@ async fn orchestrator_task(
             initial_target_catchup_height
         );
     } else {
-        info!("Orchestrator: No catch-up phase needed. Last proven height {} is at or beyond initial target {}.", 
+        info!("Orchestrator: No catch-up phase needed. Last proven height {} is at or beyond initial target {}.",
             current_height_to_process.saturating_sub(1), initial_target_catchup_height);
     }
 
@@ -660,7 +660,7 @@ async fn orchestrator_task(
                 let mut block_bytes_check = Vec::new();
                 rpc_block_to_prove.consensus_encode(&mut block_bytes_check)?;
                 if block_bytes_check.len() > app_state.config.max_batch_size_bytes {
-                    error!("(Continuous) Single block at height {} (size: {}) exceeds max_batch_size_bytes ({}). Halting.", 
+                    error!("(Continuous) Single block at height {} (size: {}) exceeds max_batch_size_bytes ({}). Halting.",
                         height_being_processed, block_bytes_check.len(), app_state.config.max_batch_size_bytes);
                     return Err(anyhow!(
                         "(Continuous) Block at height {} too large.",
@@ -977,42 +977,64 @@ async fn proof_worker_task(
             input_data: circuit_data,
         };
 
-        info!(
-            "Starting proof generation for batch ({} blocks, heights {}-{}). Final JMT version for proof: {}",
-            block_batch.len(), first_block_height_in_batch, last_block_height_in_batch, final_jmt_version_for_this_batch_proof
-        );
+        // Prepare data for ExecutorEnv (outside spawn_blocking).
+        // These data must be Send.
+        let circuit_input_bytes = borsh::to_vec(&circuit_input)
+            .context("Failed to serialize circuit input for ExecutorEnv")?;
 
-        let mut env_for_prover = ExecutorEnv::builder();
-        let env_for_prover = env_for_prover.write_slice(&borsh::to_vec(&circuit_input)?);
-        // .build()?;
-
+        let mut receipts_for_assumptions: Vec<Receipt> = Vec::new();
         if let BitcoinConsensusPrevProofType::PrevProof(prev_output) = &circuit_input.prev_proof {
-            // let prev_output = &**prev_output_boxed;
-            let proof_db_locked = app_state.proof_db.lock().await;
+            let proof_db_locked = app_state.proof_db.lock().await; // .await is fine here
             let prev_proof_block_hash_bytes =
                 prev_output.bitcoin_state.header_chain_state.best_block_hash;
             if let Ok(Some(prev_entry_for_assumption)) =
                 proof_db_locked.find_proof_by_hash(&prev_proof_block_hash_bytes)
             {
-                let prev_receipt_for_env =
-                    Receipt::try_from_slice(&prev_entry_for_assumption.receipt)?;
-                let env_for_prover = env_for_prover.add_assumption(prev_receipt_for_env);
+                match Receipt::try_from_slice(&prev_entry_for_assumption.receipt) {
+                    Ok(receipt) => receipts_for_assumptions.push(receipt),
+                    Err(e) => {
+                        warn!("WORKER: Failed to deserialize previous receipt for assumption: {}. This assumption will be skipped.", e);
+                    }
+                }
             } else {
-                warn!("WORKER: Could not find previous RISC Zero receipt (via ProofEntry hash {:?}) for ZKVM assumption. Guest must handle.", 
+                warn!("WORKER: Could not find previous RISC Zero receipt (via ProofEntry hash {:?}) for ZKVM assumption. Guest must handle.",
                     BlockHash::from_slice(&prev_proof_block_hash_bytes).unwrap_or(BlockHash::all_zeros()));
             }
         }
-        let env_for_prover = env_for_prover
-            .build()
-            .context("Failed to build ExecutorEnv for proving")?;
 
-        let prover = default_prover();
-        match prover.prove_with_opts(
-            env_for_prover,
-            &app_state.bitcoin_guest_elf,
-            &ProverOpts::succinct(),
-        ) {
-            Ok(prove_info) => {
+        info!(
+            "Starting proof generation for batch ({} blocks, heights {}-{}). Final JMT version for proof: {}",
+            block_batch.len(), first_block_height_in_batch, last_block_height_in_batch, final_jmt_version_for_this_batch_proof
+        );
+
+        // Clone necessary data for the blocking task.
+        // `app_state.bitcoin_guest_elf` is Vec<u8>, which is Send.
+        let elf_bytes = app_state.bitcoin_guest_elf.clone();
+
+        // Offload the CPU-bound proving task to a blocking thread.
+        match tokio::task::spawn_blocking(move || {
+            // Construct ExecutorEnv entirely inside the blocking task.
+            let mut env_builder = ExecutorEnv::builder();
+            env_builder.write_slice(&circuit_input_bytes);
+            for receipt in receipts_for_assumptions {
+                env_builder.add_assumption(receipt);
+            }
+            let built_env = env_builder.build()
+                .context("Failed to build ExecutorEnv inside spawn_blocking")?;
+
+            let prover = default_prover(); // Create the Rc<Prover> here
+            let prove_info = prover.prove_with_opts(
+                built_env, // built_env is created and used within this thread
+                &elf_bytes,     // elf_bytes is moved (or Arc'd) into the closure
+                &ProverOpts::succinct(),
+            )?; // ProverError will be converted to anyhow::Error by ?
+            Ok::<ProveInfo, anyhow::Error>(prove_info)
+        })
+        .await // Await the result from the blocking task
+        {
+            Ok(Ok(prove_info)) => {
+                // Proving was successful, and the closure returned Ok(prove_info)
+                // prove_info is risc0_zkvm::ProveInfo
                 let receipt = prove_info.receipt;
                 info!(
                     "Proof successful for batch ending height {}. Cycles: {}",
@@ -1022,7 +1044,7 @@ async fn proof_worker_task(
                 let output = BitcoinConsensusCircuitOutput::try_from_slice(&receipt.journal.bytes)?;
 
                 if output.bitcoin_state.utxo_set_commitment.jmt_root != temp_jmt_root {
-                    error!("CRITICAL JMT ROOT MISMATCH! Host pre-proof JMT root: {:?}, Guest output JMT root: {:?}. Batch {}-{}", 
+                    error!("CRITICAL JMT ROOT MISMATCH! Host pre-proof JMT root: {:?}, Guest output JMT root: {:?}. Batch {}-{}",
                         temp_jmt_root, output.bitcoin_state.utxo_set_commitment.jmt_root, first_block_height_in_batch, last_block_height_in_batch);
                     continue;
                 }
@@ -1065,8 +1087,8 @@ async fn proof_worker_task(
                         drop(proof_db_locked);
                         info!(
                             "Proof for batch ending height {} (block hash {}, JMT version {}) stored successfully.",
-                            last_block_height_in_batch, 
-                            current_batch_last_block_hash_for_appstate, 
+                            last_block_height_in_batch,
+                            current_batch_last_block_hash_for_appstate,
                             final_jmt_version_for_this_batch_proof
                         );
 
@@ -1086,23 +1108,30 @@ async fn proof_worker_task(
 
                         info!(
                             "Shared state updated. Last proven height: {}, Last proven hash: {:?}, JMT root {:?}, JMT version in DB {}.",
-                            last_block_height_in_batch, 
+                            last_block_height_in_batch,
                             *shared_last_proven_hash_guard,
-                            temp_jmt_root, 
+                            temp_jmt_root,
                             final_jmt_version_for_this_batch_proof
                         );
                     }
                     Err(e) => {
                         drop(proof_db_locked);
-                        error!("WORKER: Failed to store proof for batch {}-{}: {}. JMT state in RocksDB was advanced to version {} but proof not saved.", 
+                        error!("WORKER: Failed to store proof for batch {}-{}: {}. JMT state in RocksDB was advanced to version {} but proof not saved.",
                             first_block_height_in_batch, last_block_height_in_batch, e, final_jmt_version_for_this_batch_proof);
                     }
                 }
             }
-            Err(e) => {
+            Ok(Err(anyhow_err)) => {
+                // The closure returned an error (e.g. from building ExecutorEnv or from prove_with_opts)
                 error!(
                     "WORKER: Proof generation failed for batch {}-{}: {}",
-                    first_block_height_in_batch, last_block_height_in_batch, e
+                    first_block_height_in_batch, last_block_height_in_batch, anyhow_err
+                );
+            }
+            Err(join_err) => { // Error from spawn_blocking (e.g., task panicked)
+                error!(
+                    "WORKER: Proving task panicked or was cancelled for batch {}-{}: {}",
+                    first_block_height_in_batch, last_block_height_in_batch, join_err
                 );
             }
         }

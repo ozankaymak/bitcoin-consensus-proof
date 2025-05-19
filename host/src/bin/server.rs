@@ -861,7 +861,10 @@ async fn proof_worker_task(
 
             let bip_flags = BIPFlags::at_height(actual_block_height);
             let mut sorted_prev_times = temp_prev_11_times;
+            info!("Prev times before sorting: {:?}", sorted_prev_times);
             sorted_prev_times.sort_unstable();
+            info!("Prev times after sorting: {:?}", sorted_prev_times);
+            info!("Is BIP113 active? {}", bip_flags.is_bip113_active());
             let median_time_past_for_utxo = if bip_flags.is_bip113_active() {
                 sorted_prev_times[5]
             } else {

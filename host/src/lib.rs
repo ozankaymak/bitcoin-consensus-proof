@@ -11,7 +11,8 @@ use bitcoincore_rpc::{bitcoin::BlockHash, Client, RpcApi};
 use jmt::{proof::UpdateMerkleProof, KeyHash, RootHash, ValueHash};
 use rocks_db::RocksDbStorage; // Assuming this is a local module
 use sha2::Sha256;
-use sqlite::ProofEntry; // Assuming this is a local module
+use sqlite::ProofEntry;
+use tracing::info; // Assuming this is a local module
                         // tracing::{info, warn}; // Logging removed
 
 pub mod mock_host; // Assuming these are local modules
@@ -131,12 +132,17 @@ pub fn insert_utxos_and_generate_update_proofs(
 ) -> Result<UTXOInsertionUpdateProof> {
     let jmt = storage.get_jmt();
 
+
     let _initial_latest_version = storage.get_latest_version()?;
     // Logs for leaf counts and root hashes removed here
 
     let root_before_insert = storage
         .get_latest_root()?
         .unwrap_or(SPARSE_MERKLE_PLACEHOLDER_HASH);
+    info!(
+        "Root before insert: {:?}, Previous root hash: {:?}",
+        root_before_insert, *prev_root_hash
+    );
     if root_before_insert != *prev_root_hash {
         return Err(anyhow!(
             "Previous root hash mismatch. Expected: {:?}, Found in storage: {:?}",
@@ -145,6 +151,10 @@ pub fn insert_utxos_and_generate_update_proofs(
         ));
     }
     let current_jmt_version = storage.get_latest_version()?;
+    info!(
+        "Current JMT version: {}, Latest version in storage: {}",
+        current_jmt_version, _initial_latest_version
+    );
 
     let updates: Vec<(KeyHash, Option<Vec<u8>>)> = key_value_pairs
         .iter()
@@ -167,6 +177,7 @@ pub fn insert_utxos_and_generate_update_proofs(
             current_jmt_version + 1,
         )
         .context("Failed to generate JMT insertion proof")?;
+    info!("Root after insert: {:?}", root_after_insert);
 
     storage
         .update_with_batch(root_after_insert, batch, current_jmt_version + 1)
@@ -176,6 +187,11 @@ pub fn insert_utxos_and_generate_update_proofs(
     let updated_root = storage
         .get_latest_root()?
         .unwrap_or(SPARSE_MERKLE_PLACEHOLDER_HASH);
+    info!("Updated root after insert: {:?}", updated_root);
+    info!(
+        "Updated JMT version: {}, Latest version in storage: {}",
+        updated_jmt_version, current_jmt_version + 1
+    );
 
     if updated_root != root_after_insert {
         return Err(anyhow!(

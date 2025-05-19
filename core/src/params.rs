@@ -300,7 +300,7 @@ const fn get_regtest_params() -> NetworkParams {
 
         // // BIP-66 (Strict DER signatures) activation height
         // bip66_height: 363725,
-        bip68_height: 419328,
+        bip68_height: 1,
         bip112_height: 1,
         bip113_height: 1,
 

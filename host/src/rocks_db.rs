@@ -3,9 +3,9 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use rocksdb::{
     ColumnFamily, ColumnFamilyDescriptor, IteratorMode, Options, ReadOptions, WriteBatch, DB,
 };
-use tracing::info;
 use std::collections::HashSet;
 use std::path::Path;
+use tracing::info;
 
 use jmt::{
     storage::{

@@ -13,7 +13,7 @@ use rocks_db::RocksDbStorage; // Assuming this is a local module
 use sha2::Sha256;
 use sqlite::ProofEntry;
 use tracing::info; // Assuming this is a local module
-                        // tracing::{info, warn}; // Logging removed
+                   // tracing::{info, warn}; // Logging removed
 
 pub mod mock_host; // Assuming these are local modules
 pub mod rocks_db;
@@ -132,7 +132,6 @@ pub fn insert_utxos_and_generate_update_proofs(
 ) -> Result<UTXOInsertionUpdateProof> {
     let jmt = storage.get_jmt();
 
-
     let _initial_latest_version = storage.get_latest_version()?;
     // Logs for leaf counts and root hashes removed here
 
@@ -190,7 +189,8 @@ pub fn insert_utxos_and_generate_update_proofs(
     info!("Updated root after insert: {:?}", updated_root);
     info!(
         "Updated JMT version: {}, Latest version in storage: {}",
-        updated_jmt_version, current_jmt_version + 1
+        updated_jmt_version,
+        current_jmt_version + 1
     );
 
     if updated_root != root_after_insert {

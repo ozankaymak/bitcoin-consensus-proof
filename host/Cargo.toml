@@ -26,7 +26,7 @@ anyhow = "1.0"
 hashbrown = "0.15.2"
 parking_lot = "0.12.3"
 rocksdb = "0.23.0"
-tracing = "0.1"
+tracing = "0.1.41"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenv = "0.15.0"
 rusqlite = { version="0.35.0", features=["bundled"] }
@@ -35,6 +35,8 @@ bitcoincore-rpc.workspace = true
 num_cpus = "1.16.0"
 tokio = "1.45.0"
 clap = "4.5.20"
+jsonrpsee = { version = "0.25.1", features = ["client", "server", "jsonrpsee-proc-macros", "tracing"] }
+base64 = "0.22.1"
 
 [dev-dependencies]
 hex-literal = "0.4.1"

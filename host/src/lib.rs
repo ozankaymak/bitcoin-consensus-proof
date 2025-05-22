@@ -12,15 +12,12 @@ use jmt::{proof::UpdateMerkleProof, KeyHash, RootHash, ValueHash};
 use rocks_db::RocksDbStorage; // Assuming this is a local module
 use sha2::Sha256;
 use sqlite::ProofEntry;
-use tracing::info; // Assuming this is a local module
-                   // tracing::{info, warn}; // Logging removed
+use tracing::info;
 
-pub mod mock_host; // Assuming these are local modules
+pub mod mock_host;
 pub mod rocks_db;
 pub mod sqlite;
 
-// Define a constant for the default sparse Merkle tree placeholder hash.
-// "SPARSE_MERKLE_PLACEHOLDER_HASH__"
 const SPARSE_MERKLE_PLACEHOLDER_HASH_BYTES: [u8; 32] = [
     83, 80, 65, 82, 83, 69, 95, 77, 69, 82, 75, 76, 69, 95, 80, 76, 65, 67, 69, 72, 79, 76, 68, 69,
     82, 95, 72, 65, 83, 72, 95, 95,

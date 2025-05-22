@@ -1,10 +1,14 @@
 use chrono::Local;
-use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult}; // OptionalExtension might not be needed for MAX() queries now
-use std::convert::TryFrom; // For try_into on slices to arrays
+use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
+use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq)] // Added PartialEq for easier assertions in tests
+// Assuming StorableJmtOperations would be defined elsewhere (e.g., a shared core crate)
+// and borsh serialized into jmt_operations_bytes.
+// For this file, ProofEntry just holds the Vec<u8>.
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ProofEntry {
     pub block_height: u32,
     pub block_hash: [u8; 32],
@@ -12,6 +16,7 @@ pub struct ProofEntry {
     pub method_id: [u32; 8],
     pub receipt: Vec<u8>, // This includes the receipt and journal together
     pub last_version: u64,
+    pub jmt_operations_bytes: Vec<u8>, // Stores the serialized "delta" or JMT operations
 }
 
 // --- Helper Error Type for method_id conversion ---
@@ -38,7 +43,7 @@ impl Error for MethodIdConversionError {}
 
 // --- Helper functions for method_id conversion ---
 fn method_id_to_bytes(method_id: &[u32; 8]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(32); // 8 * 4 bytes
+    let mut bytes = Vec::with_capacity(32);
     for &id in method_id.iter() {
         bytes.extend_from_slice(&id.to_le_bytes());
     }
@@ -74,6 +79,9 @@ pub struct ProofDb {
     conn: Connection,
 }
 
+const SELECT_PROOF_ENTRY_COLUMNS: &str =
+    "SELECT block_height, block_hash, prev_hash, method_id, receipt, last_version, jmt_operations_bytes";
+
 impl ProofDb {
     pub fn new(db_path: &str) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open_with_flags(
@@ -89,6 +97,7 @@ impl ProofDb {
                 method_id BLOB NOT NULL,
                 receipt BLOB NOT NULL,
                 last_version INTEGER NOT NULL,
+                jmt_operations_bytes BLOB NOT NULL,
                 created_at TEXT NOT NULL,
                 PRIMARY KEY (block_height, block_hash)
             )",
@@ -138,6 +147,7 @@ impl ProofDb {
 
         let receipt: Vec<u8> = row.get(4)?;
         let last_version: u64 = row.get(5)?;
+        let jmt_operations_bytes: Vec<u8> = row.get(6)?;
 
         Ok(ProofEntry {
             block_height,
@@ -146,6 +156,7 @@ impl ProofDb {
             method_id,
             receipt,
             last_version,
+            jmt_operations_bytes,
         })
     }
 
@@ -155,9 +166,9 @@ impl ProofDb {
 
         let tx = self.conn.transaction()?;
         tx.execute(
-            "INSERT OR REPLACE INTO proofs 
-             (block_height, block_hash, prev_hash, method_id, receipt, last_version, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO proofs
+             (block_height, block_hash, prev_hash, method_id, receipt, last_version, jmt_operations_bytes, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 proof_entry.block_height,
                 proof_entry.block_hash.as_slice(),
@@ -165,6 +176,7 @@ impl ProofDb {
                 method_id_bytes,
                 proof_entry.receipt,
                 proof_entry.last_version,
+                proof_entry.jmt_operations_bytes,
                 now_rfc3339,
             ],
         )?;
@@ -176,60 +188,57 @@ impl ProofDb {
         block_height: u32,
         block_hash: &[u8; 32],
     ) -> SqliteResult<Option<ProofEntry>> {
+        let sql = format!(
+            "{} FROM proofs WHERE block_height = ?1 AND block_hash = ?2",
+            SELECT_PROOF_ENTRY_COLUMNS
+        );
         self.conn
             .query_row(
-                "SELECT block_height, block_hash, prev_hash, method_id, receipt, last_version
-             FROM proofs
-             WHERE block_height = ?1 AND block_hash = ?2",
+                &sql,
                 params![block_height, block_hash.as_slice()],
                 Self::map_row_to_proof_entry,
             )
-            .optional() // .optional() is correct here, for when the specific proof doesn't exist.
+            .optional()
     }
 
     pub fn find_proof_by_hash(&self, block_hash: &[u8; 32]) -> SqliteResult<Option<ProofEntry>> {
+        let sql = format!(
+            "{} FROM proofs WHERE block_hash = ?1 LIMIT 1",
+            SELECT_PROOF_ENTRY_COLUMNS
+        );
         self.conn
-            .query_row(
-                "SELECT block_height, block_hash, prev_hash, method_id, receipt, last_version
-             FROM proofs
-             WHERE block_hash = ?1
-             LIMIT 1",
-                params![block_hash.as_slice()],
-                Self::map_row_to_proof_entry,
-            )
-            .optional() // .optional() is correct here.
+            .query_row(&sql, params![block_hash.as_slice()], |row| {
+                Self::map_row_to_proof_entry(row)
+            })
+            .optional()
     }
 
-    /// Get all proof entries that represent the highest block height(s) in the database (chain tips).
     pub fn get_chain_tips(&self) -> SqliteResult<Vec<ProofEntry>> {
-        // MAX() on an empty table returns a single row with a NULL value.
-        // row.get(0) will infer its target type as Option<u32> from max_height_val's type.
         let max_height_val: Option<u32> =
             self.conn
                 .query_row("SELECT MAX(block_height) FROM proofs", [], |row| row.get(0))?;
 
         match max_height_val {
             Some(max_height) => {
-                // If MAX returned a non-NULL value
-                let mut stmt = self.conn.prepare(
-                    "SELECT block_height, block_hash, prev_hash, method_id, receipt, last_version
-                     FROM proofs
-                     WHERE block_height = ?1",
-                )?;
+                let sql = format!(
+                    "{} FROM proofs WHERE block_height = ?1",
+                    SELECT_PROOF_ENTRY_COLUMNS
+                );
+                let mut stmt = self.conn.prepare(&sql)?;
                 let proof_iter =
                     stmt.query_map(params![max_height], Self::map_row_to_proof_entry)?;
                 proof_iter.collect()
             }
-            None => Ok(Vec::new()), // This case means MAX(block_height) was NULL (i.e., table is empty)
+            None => Ok(Vec::new()),
         }
     }
 
     pub fn get_blocks_at_height(&self, height: u32) -> SqliteResult<Vec<ProofEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT block_height, block_hash, prev_hash, method_id, receipt, last_version
-             FROM proofs
-             WHERE block_height = ?1",
-        )?;
+        let sql = format!(
+            "{} FROM proofs WHERE block_height = ?1",
+            SELECT_PROOF_ENTRY_COLUMNS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let proof_iter = stmt.query_map(params![height], Self::map_row_to_proof_entry)?;
         proof_iter.collect()
     }
@@ -244,7 +253,7 @@ impl ProofDb {
 
     pub fn count_proofs(&self) -> SqliteResult<u64> {
         self.conn
-            .query_row("SELECT COUNT(*) FROM proofs", [], |row| row.get(0)) // COUNT(*) on empty table returns 0, not NULL.
+            .query_row("SELECT COUNT(*) FROM proofs", [], |row| row.get(0))
     }
 
     pub fn get_proofs_in_range(
@@ -252,12 +261,11 @@ impl ProofDb {
         start_height: u32,
         end_height: u32,
     ) -> SqliteResult<Vec<ProofEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT block_height, block_hash, prev_hash, method_id, receipt, last_version
-             FROM proofs
-             WHERE block_height >= ?1 AND block_height <= ?2
-             ORDER BY block_height ASC",
-        )?;
+        let sql = format!(
+            "{} FROM proofs WHERE block_height >= ?1 AND block_height <= ?2 ORDER BY block_height ASC",
+            SELECT_PROOF_ENTRY_COLUMNS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let proof_iter = stmt.query_map(
             params![start_height, end_height],
             Self::map_row_to_proof_entry,
@@ -265,27 +273,22 @@ impl ProofDb {
         proof_iter.collect()
     }
 
-    /// Get the maximum block_height present in the database.
     pub fn get_max_height(&self) -> SqliteResult<Option<u32>> {
-        // row.get(0) infers target type Option<u32> from function return type.
-        // This correctly handles MAX() returning NULL on an empty table.
         self.conn
             .query_row("SELECT MAX(block_height) FROM proofs", [], |row| row.get(0))
     }
 
-    /// Get the latest (maximum) last_version from any proof in the database.
     pub fn get_latest_version(&self) -> SqliteResult<Option<u64>> {
-        // row.get(0) infers target type Option<u64> from function return type.
         self.conn
             .query_row("SELECT MAX(last_version) FROM proofs", [], |row| row.get(0))
     }
 
     pub fn get_proofs_by_version(&self, version: u64) -> SqliteResult<Vec<ProofEntry>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT block_height, block_hash, prev_hash, method_id, receipt, last_version
-             FROM proofs
-             WHERE last_version = ?1",
-        )?;
+        let sql = format!(
+            "{} FROM proofs WHERE last_version = ?1",
+            SELECT_PROOF_ENTRY_COLUMNS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
         let proof_iter = stmt.query_map(params![version], Self::map_row_to_proof_entry)?;
         proof_iter.collect()
     }
@@ -296,7 +299,6 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    // Helper function to create a test database
     fn create_test_db() -> (ProofDb, TempDir) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let db_path = temp_dir.path().join("test.db");
@@ -305,8 +307,12 @@ mod tests {
         (db, temp_dir)
     }
 
-    // Helper function to create a sample ProofEntry
-    fn create_sample_proof(height: u32, hash_seed: u8, version: u64) -> ProofEntry {
+    fn create_sample_proof(
+        height: u32,
+        hash_seed: u8,
+        version: u64,
+        jmt_ops_seed: u8,
+    ) -> ProofEntry {
         let mut block_hash = [0u8; 32];
         block_hash[0] = hash_seed;
 
@@ -320,6 +326,7 @@ mod tests {
             method_id: [1, 2, 3, 4, 5, 6, 7, 8],
             receipt: vec![1, 2, 3, 4, 5],
             last_version: version,
+            jmt_operations_bytes: vec![jmt_ops_seed; 10], // Sample JMT ops
         }
     }
 
@@ -333,7 +340,7 @@ mod tests {
     #[test]
     fn test_save_and_retrieve_proof() {
         let (mut db, _temp_dir) = create_test_db();
-        let proof = create_sample_proof(100, 1, 42);
+        let proof = create_sample_proof(100, 1, 42, 10);
 
         db.save_proof(proof.clone()).unwrap();
 
@@ -352,7 +359,7 @@ mod tests {
     #[test]
     fn test_find_proof_by_hash() {
         let (mut db, _temp_dir) = create_test_db();
-        let proof = create_sample_proof(200, 2, 100);
+        let proof = create_sample_proof(200, 2, 100, 20);
         db.save_proof(proof.clone()).unwrap();
 
         let found = db.find_proof_by_hash(&proof.block_hash).unwrap();
@@ -367,14 +374,12 @@ mod tests {
         common_hash[0] = 55;
 
         let proof1 = ProofEntry {
-            block_height: 10,
             block_hash: common_hash,
-            ..create_sample_proof(10, 55, 1)
+            ..create_sample_proof(10, 55, 1, 1)
         };
         let proof2 = ProofEntry {
-            block_height: 20,
             block_hash: common_hash,
-            ..create_sample_proof(20, 55, 2)
+            ..create_sample_proof(20, 55, 2, 2)
         };
 
         db.save_proof(proof1.clone()).unwrap();
@@ -383,8 +388,6 @@ mod tests {
         let found = db.find_proof_by_hash(&common_hash).unwrap();
         assert!(found.is_some());
         let found_proof = found.unwrap();
-        // With LIMIT 1 and no specific ORDER BY, it could be either.
-        // The important part is that *one* is found.
         assert!(found_proof == proof1 || found_proof == proof2);
     }
 
@@ -399,11 +402,10 @@ mod tests {
         assert!(result_find.is_none());
     }
 
-    // This test should now pass with the corrected get_chain_tips
     #[test]
     fn test_get_chain_tips_empty_db() {
         let (db, _temp_dir) = create_test_db();
-        let tips = db.get_chain_tips().unwrap(); // This was panicking
+        let tips = db.get_chain_tips().unwrap();
         assert!(tips.is_empty(), "Tips should be empty for an empty DB");
     }
 
@@ -411,10 +413,10 @@ mod tests {
     fn test_get_chain_tips() {
         let (mut db, _temp_dir) = create_test_db();
 
-        let proof100 = create_sample_proof(100, 1, 10);
-        let proof200 = create_sample_proof(200, 2, 20);
-        let proof300a = create_sample_proof(300, 3, 30);
-        let proof300b = create_sample_proof(300, 4, 31);
+        let proof100 = create_sample_proof(100, 1, 10, 1);
+        let proof200 = create_sample_proof(200, 2, 20, 2);
+        let proof300a = create_sample_proof(300, 3, 30, 3);
+        let proof300b = create_sample_proof(300, 4, 31, 4);
 
         db.save_proof(proof100.clone()).unwrap();
         db.save_proof(proof200.clone()).unwrap();
@@ -434,10 +436,10 @@ mod tests {
     #[test]
     fn test_get_blocks_at_height() {
         let (mut db, _temp_dir) = create_test_db();
-        let proof150a = create_sample_proof(150, 1, 10);
-        let proof150b = create_sample_proof(150, 2, 11);
-        let proof150c = create_sample_proof(150, 3, 12);
-        let proof200 = create_sample_proof(200, 4, 20);
+        let proof150a = create_sample_proof(150, 1, 10, 1);
+        let proof150b = create_sample_proof(150, 2, 11, 2);
+        let proof150c = create_sample_proof(150, 3, 12, 3);
+        let proof200 = create_sample_proof(200, 4, 20, 4);
 
         db.save_proof(proof150a.clone()).unwrap();
         db.save_proof(proof150b.clone()).unwrap();
@@ -461,7 +463,7 @@ mod tests {
     #[test]
     fn test_delete_proof() {
         let (mut db, _temp_dir) = create_test_db();
-        let proof = create_sample_proof(100, 1, 42);
+        let proof = create_sample_proof(100, 1, 42, 1);
         db.save_proof(proof.clone()).unwrap();
 
         assert!(db.get_proof(100, &proof.block_hash).unwrap().is_some());
@@ -481,13 +483,13 @@ mod tests {
         let (mut db, _temp_dir) = create_test_db();
         assert_eq!(db.count_proofs().unwrap(), 0);
 
-        db.save_proof(create_sample_proof(100, 1, 10)).unwrap();
+        db.save_proof(create_sample_proof(100, 1, 10, 1)).unwrap();
         assert_eq!(db.count_proofs().unwrap(), 1);
 
-        db.save_proof(create_sample_proof(200, 2, 20)).unwrap();
+        db.save_proof(create_sample_proof(200, 2, 20, 2)).unwrap();
         assert_eq!(db.count_proofs().unwrap(), 2);
 
-        let proof_updated = create_sample_proof(100, 1, 15);
+        let proof_updated = create_sample_proof(100, 1, 15, 3); // Same PK
         db.save_proof(proof_updated).unwrap();
         assert_eq!(
             db.count_proofs().unwrap(),
@@ -499,11 +501,11 @@ mod tests {
     #[test]
     fn test_get_proofs_in_range() {
         let (mut db, _temp_dir) = create_test_db();
-        let p50 = create_sample_proof(50, 1, 5);
-        let p100 = create_sample_proof(100, 2, 10);
-        let p150 = create_sample_proof(150, 3, 15);
-        let p200 = create_sample_proof(200, 4, 20);
-        let p250 = create_sample_proof(250, 5, 25);
+        let p50 = create_sample_proof(50, 1, 5, 1);
+        let p100 = create_sample_proof(100, 2, 10, 2);
+        let p150 = create_sample_proof(150, 3, 15, 3);
+        let p200 = create_sample_proof(200, 4, 20, 4);
+        let p250 = create_sample_proof(250, 5, 25, 5);
 
         db.save_proof(p50.clone()).unwrap();
         db.save_proof(p100.clone()).unwrap();
@@ -529,7 +531,6 @@ mod tests {
         assert_eq!(single_height[0], p150);
     }
 
-    // This test should also pass with the corrected get_max_height
     #[test]
     fn test_get_max_height() {
         let (mut db, _temp_dir) = create_test_db();
@@ -539,16 +540,16 @@ mod tests {
             "Max height should be None for empty DB"
         );
 
-        db.save_proof(create_sample_proof(100, 1, 10)).unwrap();
+        db.save_proof(create_sample_proof(100, 1, 10, 1)).unwrap();
         assert_eq!(db.get_max_height().unwrap(), Some(100));
 
-        db.save_proof(create_sample_proof(500, 2, 50)).unwrap();
+        db.save_proof(create_sample_proof(500, 2, 50, 2)).unwrap();
         assert_eq!(db.get_max_height().unwrap(), Some(500));
 
-        db.save_proof(create_sample_proof(300, 3, 30)).unwrap();
+        db.save_proof(create_sample_proof(300, 3, 30, 3)).unwrap();
         assert_eq!(db.get_max_height().unwrap(), Some(500));
 
-        let proof_at_500 = create_sample_proof(500, 2, 50);
+        let proof_at_500 = create_sample_proof(500, 2, 50, 2);
         db.delete_proof(500, &proof_at_500.block_hash).unwrap();
         assert_eq!(db.get_max_height().unwrap(), Some(300));
     }
@@ -584,18 +585,19 @@ mod tests {
     #[test]
     fn test_update_existing_proof() {
         let (mut db, _temp_dir) = create_test_db();
-        let mut proof = create_sample_proof(100, 1, 10);
+        let mut proof = create_sample_proof(100, 1, 10, 1);
         db.save_proof(proof.clone()).unwrap();
 
         proof.receipt = vec![9, 8, 7];
         proof.last_version = 20;
+        proof.jmt_operations_bytes = vec![99; 5]; // Update JMT ops
         db.save_proof(proof.clone()).unwrap();
 
         let updated = db.get_proof(100, &proof.block_hash).unwrap().unwrap();
         assert_eq!(updated.receipt, vec![9, 8, 7]);
         assert_eq!(updated.last_version, 20);
+        assert_eq!(updated.jmt_operations_bytes, vec![99; 5]);
         assert_eq!(updated, proof);
-
         assert_eq!(
             db.count_proofs().unwrap(),
             1,
@@ -608,7 +610,7 @@ mod tests {
         let (mut db, _temp_dir) = create_test_db();
         let num_proofs = 1000;
         for i in 0..num_proofs {
-            let proof = create_sample_proof(i as u32, (i % 256) as u8, i as u64);
+            let proof = create_sample_proof(i as u32, (i % 256) as u8, i as u64, (i % 10) as u8);
             db.save_proof(proof).unwrap();
         }
 
@@ -616,16 +618,17 @@ mod tests {
         assert_eq!(db.get_max_height().unwrap(), Some((num_proofs - 1) as u32));
 
         let range = db.get_proofs_in_range(400, 600).unwrap();
-        assert_eq!(range.len(), 201);
+        assert_eq!(range.len(), 201); // 600 - 400 + 1
+        assert_eq!(range[0].jmt_operations_bytes, vec![(400 % 10) as u8; 10]);
     }
 
     #[test]
     fn test_primary_key_constraint_allows_forks() {
         let (mut db, _temp_dir) = create_test_db();
-        let proof1 = create_sample_proof(100, 1, 10);
+        let proof1 = create_sample_proof(100, 1, 10, 1);
         db.save_proof(proof1.clone()).unwrap();
 
-        let proof2 = create_sample_proof(100, 2, 11);
+        let proof2 = create_sample_proof(100, 2, 11, 2); // Same height, different hash
         db.save_proof(proof2.clone()).unwrap();
 
         assert!(db.get_proof(100, &proof1.block_hash).unwrap().is_some());
@@ -638,22 +641,23 @@ mod tests {
     }
 
     #[test]
-    fn test_edge_cases() {
+    fn test_edge_cases_with_jmt_ops() {
         let (mut db, _temp_dir) = create_test_db();
 
-        let mut proof_empty_receipt = create_sample_proof(10, 1, 10);
-        proof_empty_receipt.receipt = vec![];
-        db.save_proof(proof_empty_receipt.clone()).unwrap();
-        let retrieved_empty_receipt = db
-            .get_proof(10, &proof_empty_receipt.block_hash)
+        let mut proof_empty_receipt_and_jmt = create_sample_proof(10, 1, 10, 0);
+        proof_empty_receipt_and_jmt.receipt = vec![];
+        proof_empty_receipt_and_jmt.jmt_operations_bytes = vec![];
+        db.save_proof(proof_empty_receipt_and_jmt.clone()).unwrap();
+        let retrieved_empty = db
+            .get_proof(10, &proof_empty_receipt_and_jmt.block_hash)
             .unwrap()
             .unwrap();
-        assert_eq!(retrieved_empty_receipt.receipt, Vec::<u8>::new());
-        assert_eq!(retrieved_empty_receipt, proof_empty_receipt);
+        assert_eq!(retrieved_empty.receipt, Vec::<u8>::new());
+        assert_eq!(retrieved_empty.jmt_operations_bytes, Vec::<u8>::new());
+        assert_eq!(retrieved_empty, proof_empty_receipt_and_jmt);
 
         let i64_max_as_u64 = i64::MAX as u64;
-
-        let proof_max_vals = create_sample_proof(u32::MAX, 255, i64_max_as_u64);
+        let proof_max_vals = create_sample_proof(u32::MAX, 255, i64_max_as_u64, 255);
         db.save_proof(proof_max_vals.clone()).unwrap();
         let retrieved_max_vals = db
             .get_proof(u32::MAX, &proof_max_vals.block_hash)
@@ -661,7 +665,7 @@ mod tests {
             .unwrap();
         assert_eq!(retrieved_max_vals, proof_max_vals);
 
-        let mut zero_proof = create_sample_proof(200, 0, 0);
+        let mut zero_proof = create_sample_proof(200, 0, 0, 0);
         zero_proof.block_hash = [0u8; 32];
         zero_proof.prev_hash = [0u8; 32];
         db.save_proof(zero_proof.clone()).unwrap();
@@ -669,7 +673,6 @@ mod tests {
         assert_eq!(retrieved_zero, zero_proof);
     }
 
-    // This test should also pass with the corrected get_latest_version
     #[test]
     fn test_get_latest_version() {
         let (mut db, _temp_dir) = create_test_db();
@@ -679,26 +682,26 @@ mod tests {
             "Latest version should be None for empty DB"
         );
 
-        db.save_proof(create_sample_proof(100, 1, 10)).unwrap();
+        db.save_proof(create_sample_proof(100, 1, 10, 1)).unwrap();
         assert_eq!(db.get_latest_version().unwrap(), Some(10));
 
-        db.save_proof(create_sample_proof(200, 2, 50)).unwrap();
+        db.save_proof(create_sample_proof(200, 2, 50, 2)).unwrap();
         assert_eq!(db.get_latest_version().unwrap(), Some(50));
 
-        db.save_proof(create_sample_proof(300, 3, 30)).unwrap();
+        db.save_proof(create_sample_proof(300, 3, 30, 3)).unwrap();
         assert_eq!(db.get_latest_version().unwrap(), Some(50));
 
-        db.save_proof(create_sample_proof(400, 4, 100)).unwrap();
+        db.save_proof(create_sample_proof(400, 4, 100, 4)).unwrap();
         assert_eq!(db.get_latest_version().unwrap(), Some(100));
     }
 
     #[test]
     fn test_get_proofs_by_version() {
         let (mut db, _temp_dir) = create_test_db();
-        let p_v10_h100 = create_sample_proof(100, 1, 10);
-        let p_v20_h200 = create_sample_proof(200, 2, 20);
-        let p_v10_h300 = create_sample_proof(300, 3, 10);
-        let p_v30_h400 = create_sample_proof(400, 4, 30);
+        let p_v10_h100 = create_sample_proof(100, 1, 10, 1);
+        let p_v20_h200 = create_sample_proof(200, 2, 20, 2);
+        let p_v10_h300 = create_sample_proof(300, 3, 10, 3); // Same version, different height/ops
+        let p_v30_h400 = create_sample_proof(400, 4, 30, 4);
 
         db.save_proof(p_v10_h100.clone()).unwrap();
         db.save_proof(p_v20_h200.clone()).unwrap();
@@ -721,7 +724,7 @@ mod tests {
     #[test]
     fn test_version_persistence_on_update() {
         let (mut db, _temp_dir) = create_test_db();
-        let initial_proof = create_sample_proof(150, 5, 42);
+        let initial_proof = create_sample_proof(150, 5, 42, 1);
         db.save_proof(initial_proof.clone()).unwrap();
 
         let retrieved_initial = db
@@ -729,10 +732,12 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(retrieved_initial.last_version, 42);
+        assert_eq!(retrieved_initial.jmt_operations_bytes, vec![1; 10]);
 
         let mut updated_proof = initial_proof.clone();
         updated_proof.last_version = 84;
         updated_proof.receipt = vec![1, 0, 1, 0];
+        updated_proof.jmt_operations_bytes = vec![2; 10];
         db.save_proof(updated_proof.clone()).unwrap();
 
         let retrieved_updated = db
@@ -741,6 +746,7 @@ mod tests {
             .unwrap();
         assert_eq!(retrieved_updated.last_version, 84);
         assert_eq!(retrieved_updated.receipt, vec![1, 0, 1, 0]);
+        assert_eq!(retrieved_updated.jmt_operations_bytes, vec![2; 10]);
         assert_eq!(retrieved_updated, updated_proof);
         assert_eq!(db.count_proofs().unwrap(), 1);
     }
@@ -748,10 +754,10 @@ mod tests {
     #[test]
     fn test_version_with_chain_operations() {
         let (mut db, _temp_dir) = create_test_db();
-        let p1 = create_sample_proof(100, 1, 10);
-        let p2 = create_sample_proof(200, 2, 20);
-        let p3a = create_sample_proof(300, 3, 30);
-        let p3b = create_sample_proof(300, 4, 31);
+        let p1 = create_sample_proof(100, 1, 10, 1);
+        let p2 = create_sample_proof(200, 2, 20, 2);
+        let p3a = create_sample_proof(300, 3, 30, 3);
+        let p3b = create_sample_proof(300, 4, 31, 4);
 
         db.save_proof(p1).unwrap();
         db.save_proof(p2).unwrap();

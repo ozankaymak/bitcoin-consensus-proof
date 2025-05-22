@@ -1,30 +1,34 @@
-// host/src/bin/server.rs
-
 use anyhow::{anyhow, Context, Result};
+use bitcoin::hashes::Hash;
 use bitcoin::{consensus::Encodable, Block as RpcBlock, BlockHash};
 use bitcoin_consensus_core::{
     block::CircuitBlock,
     softfork_manager::BIPFlags,
-    utxo_set::{KeyOutPoint, UTXO},
-    BitcoinConsensusCircuitData, BitcoinConsensusCircuitInput, BitcoinConsensusCircuitOutput,
-    BitcoinConsensusPrevProofType, UTXODeletionUpdateProof, UTXOInsertionUpdateProof,
+    utxo_set::{KeyOutPoint, UTXO}, // From utxo_set.rs
+    BitcoinConsensusCircuitData,
+    BitcoinConsensusCircuitInput,
+    BitcoinConsensusCircuitOutput,
+    BitcoinConsensusPrevProofType,
+    UTXODeletionUpdateProof,
+    UTXOInsertionUpdateProof,
 };
 use bitcoincore_rpc::{Auth, Client as RpcClient, RpcApi};
 use borsh::{BorshDeserialize, BorshSerialize};
 use dotenv::dotenv;
+use host::{delete_utxo_and_generate_update_proof, insert_utxos_and_generate_update_proofs};
 use host::{
     rocks_db::RocksDbStorage,
-    sqlite::{ProofDb, ProofEntry},
+    sqlite::{ProofDb, ProofEntry}, // Assumes ProofEntry has jmt_operations_bytes
 };
-// Ensure these functions from host/src/lib.rs correctly manage JMT versions internally
-// Their returned versions (if any) for individual steps are not used for the final ProofEntry.last_version.
-use bitcoin::hashes::Hash;
-use host::{delete_utxo_and_generate_update_proof, insert_utxos_and_generate_update_proofs};
 use jmt::{proof::UpdateMerkleProof, RootHash};
-use risc0_zkvm::{compute_image_id, default_prover, ExecutorEnv, ProveInfo, ProverOpts, Receipt};
+use risc0_zkvm::{
+    compute_image_id, default_prover, sha::Block, ExecutorEnv, ProveInfo, ProverOpts, Receipt,
+};
 use std::{
     collections::{BTreeMap, VecDeque},
-    env, fs,
+    env,
+    fs,
+    net::SocketAddr, // For RPC server
     path::PathBuf,
     sync::Arc,
     time::Duration,
@@ -33,7 +37,14 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
 
+// For RPC
+use jsonrpsee::core::async_trait;
+use jsonrpsee::proc_macros::rpc;
+use jsonrpsee::server::{ServerBuilder, ServerHandle};
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
+
 const MAX_PROOF_SEARCH_DEPTH: u32 = 2016;
+const MAX_PROOFS_IN_RPC_CHAIN: usize = 100; // Limit for RPC response
 
 #[derive(Clone, Debug)]
 struct Config {
@@ -48,6 +59,7 @@ struct Config {
     target_catchup_height: u32,
     max_batch_size_bytes: usize,
     min_proof_search_height: u32,
+    rpc_listen_addr: String, // Added for RPC server
 }
 
 impl Config {
@@ -79,6 +91,8 @@ impl Config {
             min_proof_search_height: env::var("MIN_PROOF_SEARCH_HEIGHT")
                 .unwrap_or_else(|_| "0".to_string())
                 .parse()?,
+            rpc_listen_addr: env::var("RPC_LISTEN_ADDR")
+                .unwrap_or_else(|_| "127.0.0.1:9944".to_string()),
         })
     }
 }
@@ -96,12 +110,244 @@ struct AppState {
     last_proven_block_hash: Arc<Mutex<Option<BlockHash>>>,
 }
 
+/// Holds the key-value changes for a batch, to be stored as the "delta".
+#[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
+pub struct JmtKeyValueChanges {
+    pub creations: Vec<(KeyOutPoint, UTXO)>,
+    pub deletions: Vec<KeyOutPoint>,
+}
+
+// --- RPC Related Definitions ---
+mod rpc_helpers {
+    use serde::{de::Error, Deserializer, Serializer};
+    pub mod hex_array_32 {
+        use super::*;
+        use bitcoin::hashes::hex::FromHex;
+        use hex::ToHex;
+        use serde::Deserialize;
+        pub fn serialize<S>(array: &[u8; 32], serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_str(&hex::encode(&array))
+        }
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 32], D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let s = String::deserialize(deserializer)?;
+            Vec::<u8>::from_hex(&s)
+                .map_err(Error::custom)?
+                .try_into()
+                .map_err(|_| Error::custom("Invalid hex length for [u8; 32]"))
+        }
+    }
+
+    pub mod base64_vec_u8 {
+        use super::*;
+        use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+        use serde::Deserialize;
+        pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            serializer.serialize_str(&BASE64_STANDARD.encode(bytes))
+        }
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let s = String::deserialize(deserializer)?;
+            BASE64_STANDARD.decode(s.as_bytes()).map_err(Error::custom)
+        }
+    }
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize, Clone, Debug)]
+pub struct RpcProofEntry {
+    pub block_height: u32,
+    #[serde(with = "rpc_helpers::hex_array_32")]
+    pub block_hash: [u8; 32],
+    #[serde(with = "rpc_helpers::hex_array_32")]
+    pub prev_hash: [u8; 32],
+    pub method_id: [u32; 8],
+    #[serde(with = "rpc_helpers::base64_vec_u8")]
+    pub receipt: Vec<u8>,
+    pub last_version: u64,
+}
+
+#[derive(SerdeSerialize, SerdeDeserialize, Clone, Debug)]
+pub struct RpcProofChainElement {
+    pub proof_entry: RpcProofEntry,
+    #[serde(with = "rpc_helpers::base64_vec_u8")]
+    pub jmt_operations_bytes: Vec<u8>,
+}
+
+impl From<host::sqlite::ProofEntry> for RpcProofChainElement {
+    fn from(db_entry: host::sqlite::ProofEntry) -> Self {
+        RpcProofChainElement {
+            proof_entry: RpcProofEntry {
+                block_height: db_entry.block_height,
+                block_hash: db_entry.block_hash,
+                prev_hash: db_entry.prev_hash,
+                method_id: db_entry.method_id,
+                receipt: db_entry.receipt,
+                last_version: db_entry.last_version,
+            },
+            jmt_operations_bytes: db_entry.jmt_operations_bytes,
+        }
+    }
+}
+
+#[derive(Debug, SerdeDeserialize, SerdeSerialize)]
+pub struct GetProofChainParams {
+    #[serde(with = "rpc_helpers::hex_array_32")]
+    pub client_block_hash: [u8; 32],
+}
+
+#[rpc(server, client)]
+pub trait BitcoinConsensusRpc {
+    #[method(name = "getProofChain")]
+    async fn get_proof_chain(
+        &self,
+        params: GetProofChainParams,
+    ) -> jsonrpsee::core::RpcResult<Vec<RpcProofChainElement>>;
+}
+
+pub struct BitcoinConsensusRpcServerImpl {
+    app_state: Arc<AppState>,
+}
+
+impl BitcoinConsensusRpcServerImpl {
+    pub fn new(app_state: Arc<AppState>) -> Self {
+        Self { app_state }
+    }
+}
+
+#[async_trait]
+impl BitcoinConsensusRpcServer for BitcoinConsensusRpcServerImpl {
+    async fn get_proof_chain(
+        &self,
+        params: GetProofChainParams,
+    ) -> jsonrpsee::core::RpcResult<Vec<RpcProofChainElement>> {
+        let client_block_hash_bytes = params.client_block_hash;
+        info!(
+            "RPC: get_proof_chain called with client_block_hash: {:?}",
+            BlockHash::from_slice(&client_block_hash_bytes).unwrap_or(BlockHash::all_zeros())
+        );
+
+        let proof_db_locked = self.app_state.proof_db.lock().await;
+        let mut proof_chain_to_send: VecDeque<RpcProofChainElement> = VecDeque::new();
+        let last_proven_hash_on_server_opt = *self.app_state.last_proven_block_hash.lock().await;
+        let mut current_hash_to_fetch_opt = last_proven_hash_on_server_opt;
+
+        if current_hash_to_fetch_opt.is_none() {
+            info!("RPC: No proofs available in the system.");
+            return Ok(Vec::new());
+        }
+
+        let mut proofs_collected_count = 0;
+        while let Some(current_hash_to_fetch) = current_hash_to_fetch_opt {
+            if proofs_collected_count >= MAX_PROOFS_IN_RPC_CHAIN {
+                warn!(
+                    "RPC: Reached MAX_PROOFS_IN_RPC_CHAIN ({}) for client_block_hash: {:?}",
+                    MAX_PROOFS_IN_RPC_CHAIN,
+                    BlockHash::from_slice(&client_block_hash_bytes)
+                        .unwrap_or(BlockHash::all_zeros())
+                );
+                break;
+            }
+
+            match proof_db_locked.find_proof_by_hash(&current_hash_to_fetch.to_byte_array()) {
+                Ok(Some(db_proof_entry)) => {
+                    let rpc_element = RpcProofChainElement::from(db_proof_entry.clone());
+                    proof_chain_to_send.push_front(rpc_element);
+                    proofs_collected_count += 1;
+
+                    if db_proof_entry.prev_hash == client_block_hash_bytes {
+                        debug!(
+                            "RPC: Found link to client_block_hash ({:?}). Chain complete.",
+                            BlockHash::from_slice(&client_block_hash_bytes)
+                                .unwrap_or(BlockHash::all_zeros())
+                        );
+                        current_hash_to_fetch_opt = None;
+                        break;
+                    } else if client_block_hash_bytes == BlockHash::all_zeros().to_byte_array()
+                        && db_proof_entry.prev_hash == BlockHash::all_zeros().to_byte_array()
+                    {
+                        debug!("RPC: Client requested from genesis, and current proof's prev_hash is genesis. Chain complete.");
+                        current_hash_to_fetch_opt = None;
+                        break;
+                    } else if db_proof_entry.prev_hash == BlockHash::all_zeros().to_byte_array() {
+                        debug!(
+                            "RPC: Reached earliest known proof in DB. Stopping chain construction."
+                        );
+                        current_hash_to_fetch_opt = None;
+                        break;
+                    } else {
+                        current_hash_to_fetch_opt = Some(
+                            BlockHash::from_slice(&db_proof_entry.prev_hash).map_err(|e| {
+                                jsonrpsee::types::ErrorObject::owned(
+                                    -32000,
+                                    format!("Failed to parse prev_hash: {}", e),
+                                    None::<()>,
+                                )
+                            })?,
+                        );
+                    }
+                }
+                Ok(None) => {
+                    error!(
+                        "RPC: Proof chain broken. No proof found for hash {:?}",
+                        current_hash_to_fetch
+                    );
+                    current_hash_to_fetch_opt = None;
+                    break;
+                }
+                Err(e) => {
+                    error!(
+                        "RPC: DB error while fetching proof for hash {:?}: {}",
+                        current_hash_to_fetch, e
+                    );
+                    return Err(jsonrpsee::types::ErrorObject::owned(
+                        -32001,
+                        format!("DB error: {}", e),
+                        None::<()>,
+                    ));
+                }
+            }
+        }
+
+        if client_block_hash_bytes != BlockHash::all_zeros().to_byte_array()
+            && !proof_chain_to_send.is_empty()
+            && proof_chain_to_send.front().unwrap().proof_entry.prev_hash != client_block_hash_bytes
+        {
+            warn!("RPC: Client block_hash {:?} not found as a direct ancestor or is too old. Returning available chain segment from current tip.", BlockHash::from_slice(&client_block_hash_bytes).unwrap_or(BlockHash::all_zeros()));
+        } else if proof_chain_to_send.is_empty()
+            && last_proven_hash_on_server_opt.is_some()
+            && client_block_hash_bytes
+                != last_proven_hash_on_server_opt
+                    .unwrap_or(BlockHash::all_zeros())
+                    .to_byte_array()
+        {
+            warn!("RPC: Client block_hash {:?} not found or is current tip. Returning empty proof chain.", BlockHash::from_slice(&client_block_hash_bytes).unwrap_or(BlockHash::all_zeros()));
+        }
+
+        info!(
+            "RPC: Sending {} proof elements to client.",
+            proof_chain_to_send.len()
+        );
+        Ok(proof_chain_to_send.into_iter().collect())
+    }
+}
+// --- End RPC Related Definitions ---
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(Level::INFO.to_string())),
+                .unwrap_or_else(|_| EnvFilter::new(Level::DEBUG.to_string())),
         )
         .init();
 
@@ -161,7 +407,7 @@ async fn main() -> Result<()> {
     );
 
     let app_state = Arc::new(AppState {
-        config: config.clone(),
+        config: config.clone(), // Clone config for AppState
         rpc_client,
         utxo_db,
         proof_db,
@@ -181,12 +427,35 @@ async fn main() -> Result<()> {
     let orchestrator_handle =
         tokio::spawn(orchestrator_task(app_state.clone(), block_batch_sender));
 
-    info!("Server initialized. Orchestrator and proof worker are running.");
-    info!("Target Network: {}", config.network);
+    // Start RPC server
+    let rpc_server_impl = BitcoinConsensusRpcServerImpl::new(app_state.clone());
+    let rpc_addr: SocketAddr = app_state
+        .config
+        .rpc_listen_addr
+        .parse() // Use from config
+        .with_context(|| {
+            format!(
+                "Invalid RPC listen address: {}",
+                app_state.config.rpc_listen_addr
+            )
+        })?;
+
+    let rpc_server_builder = ServerBuilder::default();
+    let rpc_server = rpc_server_builder
+        .build(rpc_addr)
+        .await
+        .with_context(|| format!("Failed to build RPC server on {}", rpc_addr))?;
+
+    let rpc_handle: ServerHandle = rpc_server.start(rpc_server_impl.into_rpc());
+
+    info!("Server initialized. Orchestrator, proof worker, and RPC server are running.");
+    info!("RPC server listening on {}", rpc_addr);
+    info!("Target Network: {}", app_state.config.network);
 
     tokio::select! {
         res = orchestrator_handle => { error!("Orchestrator task exited: {:?}", res); }
         res = proof_worker_handle => { error!("Proof worker task exited: {:?}", res); }
+        _ = rpc_handle.stopped() => { info!("RPC server task stopped."); }
     }
 
     Ok(())
@@ -224,6 +493,7 @@ async fn load_initial_server_state(
     for i in 0..MAX_PROOF_SEARCH_DEPTH {
         if current_search_height < config.min_proof_search_height
             && config.min_proof_search_height > 0
+        // Only apply if min_proof_search_height is set
         {
             info!(
                 "Search reached min_proof_search_height ({}), stopping backward search.",
@@ -231,8 +501,9 @@ async fn load_initial_server_state(
             );
             break;
         }
+        // Check if we are at height 0. If so, we only process this iteration if it's the first one (i.e., chain tip is 0).
         if current_search_height == 0 && i > 0 {
-            info!("Search reached height 0, stopping backward search.");
+            info!("Search reached height 0 after initial check, stopping backward search.");
             break;
         }
 
@@ -251,10 +522,14 @@ async fn load_initial_server_state(
             }
             Ok(None) => {
                 drop(proof_db_locked);
-                if current_search_hash == BlockHash::all_zeros() || current_search_height == 0 {
+                // If current_search_hash is all zeros, or if we are at height 0 and it's not the chain tip we started with
+                if current_search_hash == BlockHash::all_zeros()
+                    || (current_search_height == 0 && current_search_hash != chain_tip_hash)
+                {
                     info!("Reached genesis or zero hash (height {}) while searching for proof. Stopping search.", current_search_height);
                     break;
                 }
+
                 match rpc.get_block(&current_search_hash).await {
                     Ok(block) => {
                         current_search_hash = block.header.prev_blockhash;
@@ -267,7 +542,20 @@ async fn load_initial_server_state(
                                 }
                             }
                         } else {
-                            current_search_height = current_search_height.saturating_sub(1);
+                            // prev_blockhash is zero, this means current_search_hash was genesis.
+                            // current_search_height should reflect the height of the block whose prev is zero.
+                            // If we were at height 1, its prev is height 0. If we were at height 0, its prev is all_zeros hash.
+                            // We effectively stop here if current_search_hash is all_zeros
+                            if current_search_height > 0 {
+                                // If current_search_height was >0, its parent (all_zeros) is conceptual height -1
+                                current_search_height = current_search_height.saturating_sub(1);
+                                // Should bring it to 0 if it was 1
+                            }
+                            if current_search_hash == BlockHash::all_zeros() {
+                                // explicit check to break
+                                info!("Reached genesis block (parent is all zeros) while searching for proof. Stopping search.");
+                                break;
+                            }
                         }
                     }
                     Err(e) => {
@@ -444,6 +732,7 @@ async fn orchestrator_task(
                 batch_start_height
             );
 
+            // Inner loop to build a batch
             while current_height_to_process <= initial_target_catchup_height {
                 let block_hash = match app_state
                     .rpc_client
@@ -453,28 +742,23 @@ async fn orchestrator_task(
                     Ok(hash) => hash,
                     Err(e) => {
                         error!(
-                            "(Catch-up) RPC error getting block hash for height {}: {}. Pausing.",
+                            "(Catch-up) RPC error getting block hash for height {}: {}. Pausing and will retry this height.",
                             current_height_to_process, e
                         );
-                        tokio::time::sleep(Duration::from_secs(
-                            app_state.config.tip_check_interval_secs,
-                        ))
-                        .await;
-                        continue;
+                        // Break inner loop to retry current_height_to_process after a delay
+                        // This means batch_to_prove might be empty or partial, which is handled below
+                        break;
                     }
                 };
                 let rpc_block = match app_state.rpc_client.get_block(&block_hash).await {
                     Ok(block) => block,
                     Err(e) => {
                         error!(
-                            "(Catch-up) RPC error getting block for height {}: {}. Pausing.",
+                            "(Catch-up) RPC error getting block for height {}: {}. Pausing and will retry this height.",
                             current_height_to_process, e
                         );
-                        tokio::time::sleep(Duration::from_secs(
-                            app_state.config.tip_check_interval_secs,
-                        ))
-                        .await;
-                        continue;
+                        // Break inner loop to retry current_height_to_process after a delay
+                        break;
                     }
                 };
 
@@ -490,7 +774,7 @@ async fn orchestrator_task(
                         "(Catch-up) Max batch size reached before adding block {}. Batch size: {}",
                         current_height_to_process, current_batch_size_bytes
                     );
-                    break;
+                    break; // break inner while to send current batch
                 }
 
                 batch_to_prove.push(CircuitBlock::from(rpc_block));
@@ -508,7 +792,7 @@ async fn orchestrator_task(
                     break;
                 }
                 current_height_to_process += 1;
-            }
+            } // End of inner batch building loop
 
             if !batch_to_prove.is_empty() {
                 let batch_actual_end_height = batch_start_height + batch_to_prove.len() as u32 - 1;
@@ -523,6 +807,7 @@ async fn orchestrator_task(
                     return Err(anyhow!("(Catch-up) Block batch queue receiver dropped."));
                 }
 
+                // Wait for this batch to be processed
                 loop {
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     let last_proven = *app_state.last_proven_block_height.lock().await;
@@ -539,9 +824,11 @@ async fn orchestrator_task(
                     );
                 }
             } else if current_height_to_process <= initial_target_catchup_height {
+                // This case is hit if the inner loop broke due to RPC error before adding any block
+                // or if a single block is too large (which should be an error exit now)
                 warn!(
-                    "(Catch-up) Empty batch formed, still below target {}. Current: {}. Checking next block.",
-                    initial_target_catchup_height, current_height_to_process
+                    "(Catch-up) Empty batch formed, likely due to RPC error at height {}. Retrying after delay.",
+                    current_height_to_process
                 );
                 let single_block_hash_res = app_state
                     .rpc_client
@@ -563,17 +850,14 @@ async fn orchestrator_task(
                             }
                         }
                     }
-                }
-                warn!(
-                    "(Catch-up) Empty batch for height {}. Retrying after delay.",
-                    current_height_to_process
-                );
+                } // End single block check
                 tokio::time::sleep(Duration::from_secs(
                     app_state.config.tip_check_interval_secs,
                 ))
                 .await;
             }
-        }
+            // If current_height_to_process > initial_target_catchup_height, outer loop will terminate
+        } // End of outer catch-up loop
         info!(
             "(Catch-up) Phase completed. Target height {} reached or passed.",
             initial_target_catchup_height
@@ -693,8 +977,8 @@ async fn orchestrator_task(
                         break;
                     }
                     debug!(
-                        "(Continuous) Waiting for block height {} to process...",
-                        expected_proven_height
+                        "(Continuous) Waiting for block height {} to process... Last proven: {:?}",
+                        expected_proven_height, last_proven_after_send
                     );
                 }
                 height_being_processed += 1;
@@ -745,6 +1029,7 @@ async fn proof_worker_task(
         let prev_proof_type_for_batch: BitcoinConsensusPrevProofType;
         let mut last_proven_hash_for_linking: Option<BlockHash>;
 
+        // --- State Preparation ---
         {
             let shared_jmt_root_guard = app_state.current_jmt_root.lock().await;
             let shared_prev_11_times_guard = app_state.prev_11_blocks_time.lock().await;
@@ -755,8 +1040,6 @@ async fn proof_worker_task(
             temp_prev_11_times = *shared_prev_11_times_guard;
             last_proven_hash_for_linking = *shared_last_proven_hash_guard;
 
-            // JMT version before this batch processing starts.
-            // This version is consistent with `temp_jmt_root` loaded from AppState.
             let jmt_version_consistent_with_loaded_state =
                 app_state.utxo_db.get_latest_version().context(
                     "Worker: Failed to get JMT latest version for batch start consistency check",
@@ -770,7 +1053,6 @@ async fn proof_worker_task(
                             match proof_db_locked.find_proof_by_hash(&prev_hash_val.to_byte_array())
                             {
                                 Ok(Some(prev_proof_entry)) => {
-                                    // This check ensures the JMT version in DB for *previous* proof matches current live JMT version.
                                     if prev_proof_entry.last_version
                                         != jmt_version_consistent_with_loaded_state
                                     {
@@ -814,14 +1096,14 @@ async fn proof_worker_task(
                 None if first_block_height_in_batch == 0 => {
                     if jmt_version_consistent_with_loaded_state != 0 {
                         warn!(
-                            "WORKER: Genesis batch (height 0), but current JMT version is {}. Expected 0.",
-                            jmt_version_consistent_with_loaded_state
-                        );
+                           "WORKER: Genesis batch (height 0), but current JMT version is {}. Expected 0.",
+                           jmt_version_consistent_with_loaded_state
+                       );
                     }
                     info!(
-                        "WORKER: Processing genesis batch (starts height {}). JMT version before batch: {}",
-                        first_block_height_in_batch, jmt_version_consistent_with_loaded_state
-                    );
+                       "WORKER: Processing genesis batch (starts height {}). JMT version before batch: {}",
+                       first_block_height_in_batch, jmt_version_consistent_with_loaded_state
+                   );
                     BitcoinConsensusPrevProofType::GenesisBlock
                 }
                 _ => {
@@ -834,8 +1116,13 @@ async fn proof_worker_task(
             };
         }
 
-        let mut batch_utxo_deletion_proofs: VecDeque<UTXODeletionUpdateProof> = VecDeque::new();
-        let mut batch_utxo_creations: BTreeMap<KeyOutPoint, UTXO> = BTreeMap::new();
+        // --- Data collection for JMT Update Proofs (for circuit) AND K-V changes (for delta) ---
+        let mut batch_utxo_deletion_proofs_for_circuit: VecDeque<UTXODeletionUpdateProof> =
+            VecDeque::new();
+        let mut batch_utxo_creations_for_circuit_and_delta: BTreeMap<KeyOutPoint, UTXO> =
+            BTreeMap::new();
+        let mut actual_deletions_for_delta: Vec<KeyOutPoint> = Vec::new();
+
         let mut current_processing_block_height_in_worker = first_block_height_in_batch;
 
         'batch_processing_loop: for (idx, circuit_block) in block_batch.iter().enumerate() {
@@ -844,16 +1131,13 @@ async fn proof_worker_task(
                 .await?;
             if actual_block_height != current_processing_block_height_in_worker {
                 error!(
-                    "WORKER: Height mismatch in batch! Expected {}, got {}. Aborting batch.",
+                    "WORKER: Height mismatch! Expected {}, got {}. Aborting.",
                     current_processing_block_height_in_worker, actual_block_height
                 );
                 break 'batch_processing_loop;
             }
-
-            // Each call to delete/insert will use app_state.utxo_db.get_latest_version() internally
-            // to determine the version for the new JMT update.
             info!(
-                "WORKER: Processing block at height {} ({} of {} in batch).",
+                "WORKER: Processing block {} ({} of {} in batch).",
                 actual_block_height,
                 idx + 1,
                 block_batch.len()
@@ -861,10 +1145,7 @@ async fn proof_worker_task(
 
             let bip_flags = BIPFlags::at_height(actual_block_height);
             let mut sorted_prev_times = temp_prev_11_times;
-            info!("Prev times before sorting: {:?}", sorted_prev_times);
             sorted_prev_times.sort_unstable();
-            info!("Prev times after sorting: {:?}", sorted_prev_times);
-            info!("Is BIP113 active? {}", bip_flags.is_bip113_active());
             let median_time_past_for_utxo = if bip_flags.is_bip113_active() {
                 sorted_prev_times[5]
             } else {
@@ -882,28 +1163,26 @@ async fn proof_worker_task(
                         vout: input.previous_output.vout,
                     };
 
-                    if batch_utxo_creations.contains_key(&utxo_key) {
-                        batch_utxo_creations.remove(&utxo_key);
+                    if batch_utxo_creations_for_circuit_and_delta.contains_key(&utxo_key) {
+                        batch_utxo_creations_for_circuit_and_delta.remove(&utxo_key);
                     } else {
-                        // delete_utxo_and_generate_update_proof updates temp_jmt_root and RocksDB JMT version internally.
                         match delete_utxo_and_generate_update_proof(
                             &app_state.utxo_db,
                             &utxo_key,
                             &mut temp_jmt_root,
                         ) {
                             Ok((utxo, proof, next_root)) => {
-                                // Explicitly ignore returned version from lib.rs
-                                batch_utxo_deletion_proofs.push_back(UTXODeletionUpdateProof {
-                                    update_proof: proof,
-                                    utxo,
-                                    new_root: next_root,
-                                });
+                                batch_utxo_deletion_proofs_for_circuit.push_back(
+                                    UTXODeletionUpdateProof {
+                                        update_proof: proof,
+                                        utxo,
+                                        new_root: next_root,
+                                    },
+                                );
+                                actual_deletions_for_delta.push(utxo_key);
                             }
                             Err(e) => {
-                                error!(
-                                    "WORKER: UTXO deletion failed for {:?} at height {}: {}. Aborting batch.",
-                                    utxo_key, actual_block_height, e
-                                );
+                                error!("WORKER: UTXO deletion failed for {:?} at height {}: {}. Aborting batch.", utxo_key, actual_block_height, e);
                                 break 'batch_processing_loop;
                             }
                         }
@@ -914,56 +1193,52 @@ async fn proof_worker_task(
                         txid: tx.compute_txid().to_byte_array(),
                         vout: vout as u32,
                     };
-                    batch_utxo_creations.insert(
-                        utxo_key,
-                        UTXO {
-                            value: output.value.to_sat(),
-                            script_pubkey: output.script_pubkey.as_bytes().to_vec(),
-                            block_height: actual_block_height,
-                            is_coinbase: tx.is_coinbase(),
-                            block_time: median_time_past_for_utxo,
-                        },
-                    );
+                    let utxo_to_create = UTXO {
+                        value: output.value.to_sat(),
+                        script_pubkey: output.script_pubkey.as_bytes().to_vec(),
+                        block_height: actual_block_height,
+                        is_coinbase: tx.is_coinbase(),
+                        block_time: median_time_past_for_utxo,
+                    };
+                    batch_utxo_creations_for_circuit_and_delta.insert(utxo_key, utxo_to_create);
                 }
             }
             current_processing_block_height_in_worker += 1;
         }
 
         if current_processing_block_height_in_worker <= last_block_height_in_batch {
-            error!("WORKER: Batch processing was aborted. Skipping proof generation. JMT state may have been partially advanced.");
+            error!("WORKER: Batch processing aborted. Skipping proof. JMT state may be partially advanced.");
             continue;
         }
 
         let key_value_pairs_for_batch_insertion: Vec<(KeyOutPoint, UTXO)> =
-            batch_utxo_creations.into_iter().collect();
+            batch_utxo_creations_for_circuit_and_delta
+                .clone()
+                .into_iter()
+                .collect();
 
-        let batch_insertion_proofs_vec = if !key_value_pairs_for_batch_insertion.is_empty() {
-            // insert_utxos_and_generate_update_proofs updates temp_jmt_root and RocksDB JMT version internally.
-            match insert_utxos_and_generate_update_proofs(
-                &app_state.utxo_db,
-                &key_value_pairs_for_batch_insertion,
-                &mut temp_jmt_root,
-            ) {
-                // Explicitly ignore new_version from the returned struct from lib.rs
-                Ok(proofs_struct) => proofs_struct.update_proof,
-                Err(e) => {
-                    error!(
-                        "WORKER: UTXO batch insertion failed: {}. Aborting batch.",
-                        e
-                    );
-                    continue;
+        let batch_insertion_proofs_vec_for_circuit =
+            if !key_value_pairs_for_batch_insertion.is_empty() {
+                match insert_utxos_and_generate_update_proofs(
+                    &app_state.utxo_db,
+                    &key_value_pairs_for_batch_insertion,
+                    &mut temp_jmt_root,
+                ) {
+                    Ok(proofs_struct) => proofs_struct.update_proof,
+                    Err(e) => {
+                        error!("WORKER: UTXO batch insertion failed: {}. Aborting.", e);
+                        continue;
+                    }
                 }
-            }
-        } else {
-            UpdateMerkleProof::new(vec![])
-        };
+            } else {
+                UpdateMerkleProof::new(vec![])
+            };
 
-        let utxo_batch_insertion_proof = UTXOInsertionUpdateProof {
-            update_proof: batch_insertion_proofs_vec,
+        let utxo_batch_insertion_proof_for_circuit = UTXOInsertionUpdateProof {
+            update_proof: batch_insertion_proofs_vec_for_circuit,
             new_root: temp_jmt_root,
         };
 
-        // Get the JMT version from RocksDbStorage AFTER all deletions and insertions for the batch.
         let final_jmt_version_for_this_batch_proof = app_state
             .utxo_db
             .get_latest_version()
@@ -971,8 +1246,8 @@ async fn proof_worker_task(
 
         let circuit_data = BitcoinConsensusCircuitData {
             blocks: block_batch.clone(),
-            utxo_deletion_update_proofs: batch_utxo_deletion_proofs,
-            utxo_insertion_update_proofs: utxo_batch_insertion_proof,
+            utxo_deletion_update_proofs: batch_utxo_deletion_proofs_for_circuit,
+            utxo_insertion_update_proofs: utxo_batch_insertion_proof_for_circuit,
         };
         let circuit_input = BitcoinConsensusCircuitInput {
             method_id: app_state.bitcoin_guest_id,
@@ -980,14 +1255,30 @@ async fn proof_worker_task(
             input_data: circuit_data,
         };
 
-        // Prepare data for ExecutorEnv (outside spawn_blocking).
-        // These data must be Send.
+        let jmt_kv_changes_for_delta = JmtKeyValueChanges {
+            creations: batch_utxo_creations_for_circuit_and_delta
+                .into_iter()
+                .collect(),
+            deletions: actual_deletions_for_delta,
+        };
+
+        let jmt_operations_bytes_for_db = match borsh::to_vec(&jmt_kv_changes_for_delta) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                error!(
+                    "WORKER: Failed to serialize JmtKeyValueChanges for DB: {}. Skipping proof.",
+                    e
+                );
+                continue;
+            }
+        };
+
         let circuit_input_bytes = borsh::to_vec(&circuit_input)
             .context("Failed to serialize circuit input for ExecutorEnv")?;
 
         let mut receipts_for_assumptions: Vec<Receipt> = Vec::new();
         if let BitcoinConsensusPrevProofType::PrevProof(prev_output) = &circuit_input.prev_proof {
-            let proof_db_locked = app_state.proof_db.lock().await; // .await is fine here
+            let proof_db_locked = app_state.proof_db.lock().await;
             let prev_proof_block_hash_bytes =
                 prev_output.bitcoin_state.header_chain_state.best_block_hash;
             if let Ok(Some(prev_entry_for_assumption)) =
@@ -1009,35 +1300,26 @@ async fn proof_worker_task(
             "Starting proof generation for batch ({} blocks, heights {}-{}). Final JMT version for proof: {}",
             block_batch.len(), first_block_height_in_batch, last_block_height_in_batch, final_jmt_version_for_this_batch_proof
         );
-
-        // Clone necessary data for the blocking task.
-        // `app_state.bitcoin_guest_elf` is Vec<u8>, which is Send.
         let elf_bytes = app_state.bitcoin_guest_elf.clone();
 
-        // Offload the CPU-bound proving task to a blocking thread.
         match tokio::task::spawn_blocking(move || {
-            // Construct ExecutorEnv entirely inside the blocking task.
             let mut env_builder = ExecutorEnv::builder();
             env_builder.write_slice(&circuit_input_bytes);
             for receipt in receipts_for_assumptions {
                 env_builder.add_assumption(receipt);
             }
-            let built_env = env_builder.build()
+            let built_env = env_builder
+                .build()
                 .context("Failed to build ExecutorEnv inside spawn_blocking")?;
 
-            let prover = default_prover(); // Create the Rc<Prover> here
-            let prove_info = prover.prove_with_opts(
-                built_env, // built_env is created and used within this thread
-                &elf_bytes,     // elf_bytes is moved (or Arc'd) into the closure
-                &ProverOpts::succinct(),
-            )?; // ProverError will be converted to anyhow::Error by ?
+            let prover = default_prover();
+            let prove_info =
+                prover.prove_with_opts(built_env, &elf_bytes, &ProverOpts::succinct())?;
             Ok::<ProveInfo, anyhow::Error>(prove_info)
         })
-        .await // Await the result from the blocking task
+        .await
         {
             Ok(Ok(prove_info)) => {
-                // Proving was successful, and the closure returned Ok(prove_info)
-                // prove_info is risc0_zkvm::ProveInfo
                 let receipt = prove_info.receipt;
                 info!(
                     "Proof successful for batch ending height {}. Cycles: {}",
@@ -1075,7 +1357,8 @@ async fn proof_worker_task(
                     prev_hash: parent_block_hash_for_entry_bytes,
                     method_id: app_state.bitcoin_guest_id,
                     receipt: proof_bytes_for_db,
-                    last_version: final_jmt_version_for_this_batch_proof, // Sourced from utxo_db.get_latest_version()
+                    last_version: final_jmt_version_for_this_batch_proof,
+                    jmt_operations_bytes: jmt_operations_bytes_for_db,
                 };
 
                 let mut proof_db_locked = app_state.proof_db.lock().await;
@@ -1125,13 +1408,12 @@ async fn proof_worker_task(
                 }
             }
             Ok(Err(anyhow_err)) => {
-                // The closure returned an error (e.g. from building ExecutorEnv or from prove_with_opts)
                 error!(
                     "WORKER: Proof generation failed for batch {}-{}: {}",
                     first_block_height_in_batch, last_block_height_in_batch, anyhow_err
                 );
             }
-            Err(join_err) => { // Error from spawn_blocking (e.g., task panicked)
+            Err(join_err) => {
                 error!(
                     "WORKER: Proving task panicked or was cancelled for batch {}-{}: {}",
                     first_block_height_in_batch, last_block_height_in_batch, join_err

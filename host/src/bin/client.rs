@@ -259,10 +259,10 @@ async fn run_client_sync_loop(
                                 v.block_height
                             );
                         }
-                        // info!(
-                        //     "RPC Client:     JMT Deletions: {}",
-                        //     jmt_kv_changes.deletions.len()
-                        // );
+                        info!(
+                            "RPC Client:     JMT Deletions: {}",
+                            jmt_kv_changes.deletions.len()
+                        );
                         for k in jmt_kv_changes.deletions.iter().take(2) {
                             info!(
                                 "      - TxID: ...{}, vout: {}",

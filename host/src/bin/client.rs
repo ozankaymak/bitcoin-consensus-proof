@@ -15,7 +15,7 @@ use std::{
     path::PathBuf, // Added for PathBuf
     time::{Duration, Instant},
 };
-use tracing::{debug, error, info, warn, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
 
 // Assuming these types are available from your project structure
@@ -121,7 +121,7 @@ pub trait BitcoinConsensusRpcClient {
 
 /// JMT Key-Value changes received from the server.
 /// This definition must match the one used by the server when serializing this data.
-#[derive(Clone, Debug, BorshSerialize, BorshDeserialize, SerdeSerialize)] // Added SerdeSerialize for easier debug printing
+#[derive(Clone, Debug, BorshSerialize, BorshDeserialize, SerdeSerialize)] // Added SerdeSerialize for easier info printing
 pub struct JmtKeyValueChanges {
     pub creations: Vec<(KeyOutPoint, UTXO)>,
     pub deletions: Vec<KeyOutPoint>,
@@ -246,12 +246,12 @@ async fn run_client_sync_loop(
                                     )
                                 })?;
 
-                        debug!(
+                        info!(
                             "RPC Client:     JMT Creations: {}",
                             jmt_kv_changes.creations.len()
                         );
                         for (k, v) in jmt_kv_changes.creations.iter().take(2) {
-                            debug!(
+                            info!(
                                 "      + TxID: ...{}, vout: {} -> Value ({} sats), Height: {}",
                                 hex::encode(&k.txid[28..]),
                                 k.vout,
@@ -259,12 +259,12 @@ async fn run_client_sync_loop(
                                 v.block_height
                             );
                         }
-                        debug!(
-                            "RPC Client:     JMT Deletions: {}",
-                            jmt_kv_changes.deletions.len()
-                        );
+                        // info!(
+                        //     "RPC Client:     JMT Deletions: {}",
+                        //     jmt_kv_changes.deletions.len()
+                        // );
                         for k in jmt_kv_changes.deletions.iter().take(2) {
-                            debug!(
+                            info!(
                                 "      - TxID: ...{}, vout: {}",
                                 hex::encode(&k.txid[28..]),
                                 k.vout
@@ -387,7 +387,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(Level::DEBUG.to_string())),
+                .unwrap_or_else(|_| EnvFilter::new(Level::INFO.to_string())),
         )
         .init();
 

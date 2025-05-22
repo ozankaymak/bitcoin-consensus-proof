@@ -137,10 +137,14 @@ mod rpc_helpers {
             D: Deserializer<'de>,
         {
             let s = String::deserialize(deserializer)?;
-            Vec::<u8>::from_hex(&s)
+            hex::decode(s)
                 .map_err(Error::custom)?
                 .try_into()
-                .map_err(|_| Error::custom("Invalid hex length for [u8; 32]"))
+                .map_err(|_| {
+                    Error::custom(format!(
+                        "Invalid hex length for [u8; 32], expected 32 bytes"
+                    ))
+                })
         }
     }
 
@@ -233,19 +237,43 @@ impl BitcoinConsensusRpcServer for BitcoinConsensusRpcServerImpl {
     ) -> jsonrpsee::core::RpcResult<Vec<RpcProofChainElement>> {
         let client_block_hash_bytes = params.client_block_hash;
         info!(
-            "RPC: get_proof_chain called with client_block_hash: {:?}",
+            "RPC: get_proof_chain called. Raw client_block_hash_bytes: {:x?}", // Logging raw bytes
+            client_block_hash_bytes
+        );
+        info!(
+            "RPC: Client's BlockHash (display form): {:?}", // For contextual understanding
             BlockHash::from_slice(&client_block_hash_bytes).unwrap_or(BlockHash::all_zeros())
         );
 
         let proof_db_locked = self.app_state.proof_db.lock().await;
         let mut proof_chain_to_send: VecDeque<RpcProofChainElement> = VecDeque::new();
         let last_proven_hash_on_server_opt = *self.app_state.last_proven_block_hash.lock().await;
+
+        // --- START PROPOSED FIX ---
+        // If client's requested block_hash is the same as the server's current tip,
+        // it means the client is up-to-date.
+        if let Some(server_tip_hash) = last_proven_hash_on_server_opt {
+            if server_tip_hash.to_byte_array() == client_block_hash_bytes {
+                info!(
+                    "RPC: Client is already at the current server tip (Block Hash: {:?}). Returning empty proof chain.",
+                    server_tip_hash
+                );
+                return Ok(Vec::new());
+            }
+        }
+        // --- END PROPOSED FIX ---
+
         let mut current_hash_to_fetch_opt = last_proven_hash_on_server_opt;
 
         if current_hash_to_fetch_opt.is_none() {
+            // This case handles when the server has no proofs at all.
             info!("RPC: No proofs available in the system.");
             return Ok(Vec::new());
         }
+
+        // ... (rest of the existing logic to build the proof chain) ...
+        // The existing loop starts from current_hash_to_fetch_opt (server's tip)
+        // and walks backwards.
 
         let mut proofs_collected_count = 0;
         while let Some(current_hash_to_fetch) = current_hash_to_fetch_opt {
@@ -265,27 +293,31 @@ impl BitcoinConsensusRpcServer for BitcoinConsensusRpcServerImpl {
                     proof_chain_to_send.push_front(rpc_element);
                     proofs_collected_count += 1;
 
+                    // Check if the previous hash of the current proof entry links to the client's hash
                     if db_proof_entry.prev_hash == client_block_hash_bytes {
                         debug!(
                             "RPC: Found link to client_block_hash ({:?}). Chain complete.",
                             BlockHash::from_slice(&client_block_hash_bytes)
                                 .unwrap_or(BlockHash::all_zeros())
                         );
-                        current_hash_to_fetch_opt = None;
+                        current_hash_to_fetch_opt = None; // Mark to stop iteration
                         break;
                     } else if client_block_hash_bytes == BlockHash::all_zeros().to_byte_array()
                         && db_proof_entry.prev_hash == BlockHash::all_zeros().to_byte_array()
                     {
+                        // This case is for when the client requests from genesis and the current proof also starts from genesis.
                         debug!("RPC: Client requested from genesis, and current proof's prev_hash is genesis. Chain complete.");
                         current_hash_to_fetch_opt = None;
                         break;
                     } else if db_proof_entry.prev_hash == BlockHash::all_zeros().to_byte_array() {
+                        // Reached the earliest proof in the DB (which is not genesis itself but links to it)
                         debug!(
-                            "RPC: Reached earliest known proof in DB. Stopping chain construction."
+                            "RPC: Reached earliest known proof in DB (links to genesis). Stopping chain construction."
                         );
-                        current_hash_to_fetch_opt = None;
+                        current_hash_to_fetch_opt = None; // Mark to stop iteration
                         break;
                     } else {
+                        // Continue walking back
                         current_hash_to_fetch_opt = Some(
                             BlockHash::from_slice(&db_proof_entry.prev_hash).map_err(|e| {
                                 jsonrpsee::types::ErrorObject::owned(
@@ -298,11 +330,12 @@ impl BitcoinConsensusRpcServer for BitcoinConsensusRpcServerImpl {
                     }
                 }
                 Ok(None) => {
+                    // This means the chain is broken in the DB, or we walked off the end of known proofs.
                     error!(
-                        "RPC: Proof chain broken. No proof found for hash {:?}",
+                        "RPC: Proof chain broken internally or walked off known proofs. No proof found for hash {:?}",
                         current_hash_to_fetch
                     );
-                    current_hash_to_fetch_opt = None;
+                    current_hash_to_fetch_opt = None; // Mark to stop iteration
                     break;
                 }
                 Err(e) => {
@@ -319,19 +352,26 @@ impl BitcoinConsensusRpcServer for BitcoinConsensusRpcServerImpl {
             }
         }
 
-        if client_block_hash_bytes != BlockHash::all_zeros().to_byte_array()
-            && !proof_chain_to_send.is_empty()
-            && proof_chain_to_send.front().unwrap().proof_entry.prev_hash != client_block_hash_bytes
-        {
-            warn!("RPC: Client block_hash {:?} not found as a direct ancestor or is too old. Returning available chain segment from current tip.", BlockHash::from_slice(&client_block_hash_bytes).unwrap_or(BlockHash::all_zeros()));
-        } else if proof_chain_to_send.is_empty()
-            && last_proven_hash_on_server_opt.is_some()
-            && client_block_hash_bytes
-                != last_proven_hash_on_server_opt
-                    .unwrap_or(BlockHash::all_zeros())
-                    .to_byte_array()
-        {
-            warn!("RPC: Client block_hash {:?} not found or is current tip. Returning empty proof chain.", BlockHash::from_slice(&client_block_hash_bytes).unwrap_or(BlockHash::all_zeros()));
+        // After the loop, evaluate the constructed chain
+        if !proof_chain_to_send.is_empty() {
+            // If a chain was constructed, check if its starting point links to the client's request.
+            if proof_chain_to_send.front().unwrap().proof_entry.prev_hash != client_block_hash_bytes
+                && client_block_hash_bytes != BlockHash::all_zeros().to_byte_array()
+            // Avoid warning if client asked for genesis and we send from genesis
+            {
+                warn!("RPC: Client block_hash {:?} not found as a direct ancestor or is too old. Returning available chain segment from current tip.", BlockHash::from_slice(&client_block_hash_bytes).unwrap_or(BlockHash::all_zeros()));
+            }
+        } else {
+            // proof_chain_to_send is empty.
+            // This can happen if last_proven_hash_on_server_opt was Some, but client_block_hash_bytes was different,
+            // and the loop didn't find any proofs (e.g., MAX_PROOFS_IN_RPC_CHAIN = 0, or immediate break).
+            // The initial fix at the top should catch most "client is up to date" cases.
+            // This part handles if the client requested something not the tip, but still no chain could be formed that links.
+            if last_proven_hash_on_server_opt.is_some()
+                && client_block_hash_bytes != BlockHash::all_zeros().to_byte_array()
+            {
+                warn!("RPC: Client block_hash {:?} not found, or no linkable chain segment. Returning empty proof chain.", BlockHash::from_slice(&client_block_hash_bytes).unwrap_or(BlockHash::all_zeros()));
+            }
         }
 
         info!(
@@ -348,7 +388,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new(Level::DEBUG.to_string())),
+                .unwrap_or_else(|_| EnvFilter::new(Level::INFO.to_string())),
         )
         .init();
 

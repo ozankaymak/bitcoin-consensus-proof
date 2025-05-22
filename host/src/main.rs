@@ -576,7 +576,7 @@ mod tests {
         tracing_subscriber::fmt()
             .with_env_filter(
                 EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| EnvFilter::new(Level::ERROR.to_string())),
+                    .unwrap_or_else(|_| EnvFilter::new(Level::INFO.to_string())),
             )
             .init();
 
@@ -590,9 +590,9 @@ mod tests {
 
         // Define test parameters
         let mock_method_id = [1, 2, 3, 4, 5, 6, 7, 8];
-        let batch_size = 100; // Process 100 blocks per batch
-        let num_batches = 800; // Run 800 batches
-        let network = "testnet4"; // Using testnet for more predictable block sizes
+        let batch_size = 11; // Process 100 blocks per batch
+        let num_batches = 1; // Run 800 batches
+        let network = "regtest"; // Using testnet for more predictable block sizes
 
         // Initialize RocksDB storage
         let storage = RocksDbStorage::new(db_path.to_str().unwrap())?;

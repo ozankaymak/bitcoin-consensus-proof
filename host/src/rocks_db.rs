@@ -5,6 +5,7 @@ use rocksdb::{
 };
 use std::collections::HashSet;
 use std::path::Path;
+use tracing::info;
 
 use jmt::{
     storage::{
@@ -159,12 +160,28 @@ impl RocksDbStorage {
                 latest_version
             ));
         }
+
+        // If already at the target version, and it's not a special case for ensuring v0 exists
         if target_version_inclusive == latest_version {
-            println!(
-                "Prune target version {} is the same as latest version {}. No pruning needed.",
-                target_version_inclusive, latest_version
-            );
-            return Ok(()); // No versions to prune
+            // Special handling: if target is 0 and it's already the latest,
+            // ensure its metadata exists. This can happen if `prune(0)` is called multiple times
+            // on an already "fresh" DB.
+            if target_version_inclusive == 0 && self.get_version_metadata(0)?.is_none() {
+                info!(
+                    "Pruning to version 0, which is current latest, but metadata missing. Ensuring default metadata for version 0."
+                );
+                // This path will be covered by the main logic below,
+                // so no direct return here, let it flow to the metadata creation.
+            } else {
+                info!(
+                    "Prune target version {} is the same as latest version {}. No significant pruning needed.",
+                    target_version_inclusive, latest_version
+                );
+                // If not version 0, or if version 0 metadata already exists, then it's truly a no-op.
+                if target_version_inclusive != 0 || self.get_version_metadata(0)?.is_some() {
+                    return Ok(());
+                }
+            }
         }
 
         let mut batch = WriteBatch::default();
@@ -174,6 +191,7 @@ impl RocksDbStorage {
         let value_version_index_cf = self.cf_handle(VALUE_VERSION_INDEX_CF)?;
 
         // Prune versions from (target_version_inclusive + 1) up to latest_version
+        // This loop will not run if target_version_inclusive == latest_version
         for version_to_prune in (target_version_inclusive + 1)..=latest_version {
             let version_key_bytes = version_to_prune.to_be_bytes();
 
@@ -191,8 +209,6 @@ impl RocksDbStorage {
                         }
                     }
                     Err(e) => {
-                        // Log warning instead of failing the whole prune operation for a deserialization error here.
-                        // Data in VALUES_CF might not be fully pruned for this specific version if this occurs.
                         eprintln!(
                             "Warning: Failed to deserialize KeyHash list for version {}: {}. \
                              Some values for this version might not be pruned via index.",
@@ -205,15 +221,48 @@ impl RocksDbStorage {
         }
 
         let metadata_cf = self.cf_handle(METADATA_CF)?;
-        let target_metadata = self
-            .get_version_metadata(target_version_inclusive)?
-            .ok_or_else(|| {
-                anyhow!(
-                    "No metadata found for target version {}",
-                    target_version_inclusive
-                )
-            })?;
 
+        // Retrieve or create metadata for the target_version_inclusive.
+        let target_metadata = match self.get_version_metadata(target_version_inclusive)? {
+            Some(meta) => meta,
+            None => {
+                if target_version_inclusive == 0 {
+                    // This is the "fresh start" case where version 0 metadata doesn't exist.
+                    // Create it using the default empty JMT root.
+                    println!( // Consider using tracing::info! if integrated
+                        "No metadata found for target version 0 during prune. Creating default metadata for fresh start."
+                    );
+
+                    // This is the standard empty JMT root, same as default_jmt_root() in server.rs
+                    let default_empty_root = RootHash::from([
+                        83, 80, 65, 82, 83, 69, 95, 77, 69, 82, 75, 76, 69, 95, 80, 76, 65, 67, 69,
+                        72, 79, 76, 68, 69, 82, 95, 72, 65, 83, 72, 95, 95,
+                    ]);
+
+                    let fresh_v0_metadata = VersionMetadata {
+                        root_hash: default_empty_root,
+                        rightmost_leaf: None, // An empty tree at version 0 has no rightmost leaf
+                    };
+
+                    // Store this newly created metadata for version 0.
+                    // It's important to do this before it's used to update LATEST_ROOT_KEY.
+                    // Storing it outside the main batch is okay here as it's a setup step.
+                    self.store_version_metadata(0, &fresh_v0_metadata).context(
+                        "Failed to store fresh metadata for version 0 during prune operation",
+                    )?;
+
+                    fresh_v0_metadata // Use this newly created metadata
+                } else {
+                    // If metadata is missing for any other version (> 0), it's an error.
+                    return Err(anyhow!(
+                        "No metadata found for target version {} (and it's not version 0, so this is an error)",
+                        target_version_inclusive
+                    ));
+                }
+            }
+        };
+
+        // Update the main metadata table (METADATA_CF) to reflect the new latest state.
         batch.put_cf(
             metadata_cf,
             LATEST_VERSION_KEY,
@@ -222,7 +271,7 @@ impl RocksDbStorage {
         batch.put_cf(
             metadata_cf,
             LATEST_ROOT_KEY,
-            target_metadata.root_hash.0.to_vec(),
+            target_metadata.root_hash.0.to_vec(), // Uses the (potentially newly created) root hash for v0
         );
 
         if let Some((ref node_key, ref leaf_node)) = target_metadata.rightmost_leaf {
@@ -230,6 +279,7 @@ impl RocksDbStorage {
                 .context("Failed to serialize target rightmost leaf tuple for prune")?;
             batch.put_cf(metadata_cf, RIGHTMOST_LEAF_KEY, combined_bytes);
         } else {
+            // If target_metadata (especially for a fresh v0) has no rightmost_leaf
             batch.delete_cf(metadata_cf, RIGHTMOST_LEAF_KEY);
         }
 
@@ -238,8 +288,8 @@ impl RocksDbStorage {
             .context("Failed to write prune batch to RocksDB")?;
 
         println!(
-            "Pruned database from version {} down to version {}",
-            latest_version, target_version_inclusive
+            "Pruned database. New latest version is {}. Previous latest was {}.",
+            target_version_inclusive, latest_version
         );
         Ok(())
     }

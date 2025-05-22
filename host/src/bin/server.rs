@@ -71,7 +71,8 @@ impl Config {
             rpc_user: env::var("RPC_USER").unwrap_or_else(|_| "admin".to_string()),
             rpc_pass: env::var("RPC_PASS").unwrap_or_else(|_| "admin".to_string()),
             rocks_db_path: PathBuf::from(
-                env::var("ROCKS_DB_PATH").unwrap_or_else(|_| "data/utxo_db_server".to_string()),
+                env::var("ROCKS_DB_PATH_SERVER")
+                    .unwrap_or_else(|_| "data/utxo_db_server".to_string()),
             ),
             proof_db_path: env::var("PROOF_DB_PATH")
                 .unwrap_or_else(|_| "data/proofs_db_server.sqlite".to_string()),

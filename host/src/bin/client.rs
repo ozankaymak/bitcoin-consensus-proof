@@ -12,20 +12,23 @@ use risc0_zkvm::{
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use std::{
     env,
+    path::PathBuf, // Added for PathBuf
     time::{Duration, Instant},
 };
 use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::EnvFilter;
 
 // Assuming these types are available from your project structure
-// (e.g., from a shared crate like `bitcoin_consensus_core`)
-// For this example, they are redefined here or assumed to be in scope.
-// If they are in `bitcoin_consensus_core`, you'd use `bitcoin_consensus_core::utxo_set::{KeyOutPoint, UTXO};`
-// For now, let's assume they are brought into scope correctly from the same crate or a dependency.
-// If they are in the same crate (host), you might use `crate::utxo_set::{KeyOutPoint, UTXO}` if `utxo_set.rs` is part of `host` lib.
-// For a binary, it often depends on the library part of its own package or external crates.
-// Assuming they are available via `bitcoin_consensus_core` for this example.
-use bitcoin_consensus_core::utxo_set::{KeyOutPoint, UTXO};
+use bitcoin_consensus_core::{
+    utxo_set::{KeyOutPoint, OutPointBytes, UTXOBytes, UTXO}, // Added OutPointBytes, UTXOBytes
+    BitcoinConsensusCircuitOutput,                           // Added
+};
+
+// JMT and RocksDB imports
+use host::rocks_db::RocksDbStorage; // This line assumes `host::rocks_db` is accessible.
+                                    // If client.rs is in a separate crate, ensure the `host` crate (or the relevant module)
+                                    // is a dependency and `RocksDbStorage` is public.
+use jmt::{KeyHash, OwnedValue, RootHash, Sha256Jmt}; // Added JMT types
 
 // --- RPC Data Structures (must match server's definitions) ---
 mod rpc_helpers {
@@ -129,6 +132,7 @@ struct ClientConfig {
     server_url: String,
     guest_image_id: Digest,
     sync_interval_secs: u64,
+    rocks_db_path_client: PathBuf, // Added for client's RocksDB
 }
 
 impl ClientConfig {
@@ -154,11 +158,18 @@ impl ClientConfig {
             sync_interval_secs: env::var("CLIENT_SYNC_INTERVAL_SECS")
                 .unwrap_or_else(|_| "30".to_string())
                 .parse()?,
+            rocks_db_path_client: PathBuf::from(
+                env::var("CLIENT_ROCKS_DB_PATH")
+                    .unwrap_or_else(|_| "data/utxo_db_client".to_string()),
+            ),
         })
     }
 }
 
-async fn run_client_sync_loop(config: ClientConfig) -> Result<()> {
+async fn run_client_sync_loop(
+    config: ClientConfig,
+    client_jmt_storage: RocksDbStorage, // Pass RocksDbStorage instance
+) -> Result<()> {
     info!("RPC Client: Connecting to server at {}", config.server_url);
     let client = HttpClientBuilder::default()
         .build(&config.server_url)
@@ -202,11 +213,12 @@ async fn run_client_sync_loop(config: ClientConfig) -> Result<()> {
 
                     for (idx, element) in proof_chain.iter().enumerate() {
                         info!(
-                            "RPC Client: Processing element {}/{} for block height {} (hash: {})",
+                            "RPC Client: Processing element {}/{} for block height {} (hash: {}) target JMT version: {}",
                             idx + 1,
                             proof_chain.len(),
                             element.proof_entry.block_height,
-                            hex::encode(element.proof_entry.block_hash)
+                            hex::encode(element.proof_entry.block_hash),
+                            element.proof_entry.last_version
                         );
 
                         // 1. Verify RISC Zero Receipt
@@ -216,7 +228,7 @@ async fn run_client_sync_loop(config: ClientConfig) -> Result<()> {
                             .map_err(|e| anyhow!("Failed to borsh deserialize receipt: {}", e))?;
 
                         receipt.verify(config.guest_image_id.clone()) // Use the Digest directly
-                            .map_err(|e| anyhow!("Receipt verification failed for block height {}: {} (Image ID: {})", 
+                            .map_err(|e| anyhow!("Receipt verification failed for block height {}: {} (Image ID: {})",
                                 element.proof_entry.block_height, e, config.guest_image_id))?;
                         info!(
                             "RPC Client:   Receipt for block height {} verified successfully.",
@@ -235,7 +247,7 @@ async fn run_client_sync_loop(config: ClientConfig) -> Result<()> {
                                 })?;
 
                         debug!(
-                            "RPC Client:     Creations: {}",
+                            "RPC Client:     JMT Creations: {}",
                             jmt_kv_changes.creations.len()
                         );
                         for (k, v) in jmt_kv_changes.creations.iter().take(2) {
@@ -248,7 +260,7 @@ async fn run_client_sync_loop(config: ClientConfig) -> Result<()> {
                             );
                         }
                         debug!(
-                            "RPC Client:     Deletions: {}",
+                            "RPC Client:     JMT Deletions: {}",
                             jmt_kv_changes.deletions.len()
                         );
                         for k in jmt_kv_changes.deletions.iter().take(2) {
@@ -259,20 +271,82 @@ async fn run_client_sync_loop(config: ClientConfig) -> Result<()> {
                             );
                         }
 
-                        // 3. Apply Delta to client JMT (unimplemented)
-                        info!("RPC Client:   Applying JMT K-V changes to local JMT... (unimplemented for block height {})", element.proof_entry.block_height);
-                        // Placeholder: apply_delta_to_client_jmt(&mut client_jmt_state, jmt_kv_changes);
+                        // 3. Apply Delta to client JMT
+                        info!(
+                            "RPC Client:   Applying JMT K-V changes to local JMT for version {}...",
+                            element.proof_entry.last_version
+                        );
+                        let version_for_this_delta = element.proof_entry.last_version;
+                        let mut updates_for_jmt: Vec<(KeyHash, Option<OwnedValue>)> = Vec::new();
 
-                        // 4. Verify client JMT root matches receipt output (unimplemented)
-                        // let output = BitcoinConsensusCircuitOutput::try_from_slice(&receipt.journal.bytes)
-                        //    .map_err(|e| anyhow!("Failed to deserialize circuit output: {:?}", e))?;
-                        // let expected_jmt_root = output.bitcoin_state.utxo_set_commitment.jmt_root;
-                        // let client_current_jmt_root = client_jmt_state.root_hash()?; // Example
-                        // if client_current_jmt_root != expected_jmt_root {
-                        //     error!("JMT root hash Mismatch after applying delta for block {}!", element.proof_entry.block_height);
-                        //     return Err(anyhow!("JMT root hash mismatch after applying delta for block {}!", element.proof_entry.block_height));
-                        // }
-                        // info!("RPC Client:   JMT root hash matches for block {}.", element.proof_entry.block_height);
+                        for key_out_point in &jmt_kv_changes.deletions {
+                            let key_bytes = OutPointBytes::from(*key_out_point);
+                            let key_hash = KeyHash::with::<sha2::Sha256>(key_bytes.as_ref());
+                            updates_for_jmt.push((key_hash, None));
+                        }
+
+                        for (key_out_point, utxo) in &jmt_kv_changes.creations {
+                            let key_bytes = OutPointBytes::from(*key_out_point);
+                            let key_hash = KeyHash::with::<sha2::Sha256>(key_bytes.as_ref());
+                            let utxo_bytes_struct = UTXOBytes::from(utxo.clone());
+                            let owned_value: OwnedValue = utxo_bytes_struct.0;
+                            updates_for_jmt.push((key_hash, Some(owned_value)));
+                        }
+
+                        let client_tree = client_jmt_storage.get_jmt();
+                        let (calculated_new_root, node_batch) = client_tree
+                            .put_value_set(updates_for_jmt, version_for_this_delta)
+                            .with_context(|| {
+                                format!(
+                                    "Failed to apply JMT updates for version {}",
+                                    version_for_this_delta
+                                )
+                            })?;
+
+                        client_jmt_storage
+                            .update_with_batch(
+                                calculated_new_root,
+                                node_batch,
+                                version_for_this_delta,
+                            )
+                            .with_context(|| {
+                                format!(
+                                    "Failed to write JMT batch to RocksDB for version {}",
+                                    version_for_this_delta
+                                )
+                            })?;
+                        info!(
+                            "RPC Client:   Delta applied. Client JMT root for version {}: {:?}",
+                            version_for_this_delta, calculated_new_root
+                        );
+
+                        // 4. Verify client JMT root matches receipt output
+                        let output_from_receipt = BitcoinConsensusCircuitOutput::try_from_slice(&receipt.journal.bytes)
+                           .map_err(|e| anyhow!("Failed to deserialize circuit output from receipt journal for block {}: {:?}", element.proof_entry.block_height, e))?;
+
+                        let expected_jmt_root_from_receipt = output_from_receipt
+                            .bitcoin_state
+                            .utxo_set_commitment
+                            .jmt_root;
+
+                        if calculated_new_root != expected_jmt_root_from_receipt {
+                            error!(
+                                "CRITICAL: JMT root hash Mismatch after applying delta for block height {} (JMT version {})!",
+                                element.proof_entry.block_height, version_for_this_delta
+                            );
+                            error!("  Client calculated JMT root: {:?}", calculated_new_root);
+                            error!(
+                                "  Receipt expected JMT root:  {:?}",
+                                expected_jmt_root_from_receipt
+                            );
+                            return Err(anyhow!(
+                                "JMT root hash mismatch for block height {} (JMT version {})!",
+                                element.proof_entry.block_height,
+                                version_for_this_delta
+                            ));
+                        }
+                        info!("RPC Client:   JMT root hash matches receipt for block height {} (JMT version {}).", element.proof_entry.block_height, version_for_this_delta);
+
                         if idx == proof_chain.len() - 1 {
                             // Only if this is the last element processed in the chain
                             new_tip_hash_bytes = element.proof_entry.block_hash;
@@ -320,10 +394,42 @@ async fn main() -> Result<()> {
     info!("Bitcoin Consensus Client starting...");
     let config = ClientConfig::load().context("Failed to load client configuration")?;
 
-    // Initialize client's JMT and other state here if needed
-    // let mut client_jmt_state = initialize_client_jmt_somehow();
+    // Ensure client's RocksDB directory exists
+    if let Some(parent_dir) = config.rocks_db_path_client.parent() {
+        if !parent_dir.exists() {
+            std::fs::create_dir_all(parent_dir).with_context(|| {
+                format!(
+                    "Failed to create directory for client RocksDB: {:?}",
+                    parent_dir
+                )
+            })?;
+        }
+    } else if !config.rocks_db_path_client.exists()
+        && config.rocks_db_path_client.file_name().is_some()
+    {
+        // Handle cases where the path is like "utxo_db_client" directly in current dir
+        std::fs::create_dir_all(&config.rocks_db_path_client).with_context(|| {
+            format!(
+                "Failed to create client RocksDB directory: {:?}",
+                config.rocks_db_path_client
+            )
+        })?;
+    }
 
-    if let Err(e) = run_client_sync_loop(config /*, &mut client_jmt_state */).await {
+    // Initialize client's JMT storage
+    let client_jmt_storage =
+        RocksDbStorage::new(&config.rocks_db_path_client).with_context(|| {
+            format!(
+                "Failed to initialize client UTXO DB at {:?}",
+                config.rocks_db_path_client
+            )
+        })?;
+    info!(
+        "Client JMT RocksDB initialized at: {:?}",
+        config.rocks_db_path_client
+    );
+
+    if let Err(e) = run_client_sync_loop(config, client_jmt_storage).await {
         error!("Client encountered an error: {}", e);
         return Err(e);
     }

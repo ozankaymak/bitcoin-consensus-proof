@@ -19,27 +19,43 @@ While the initial focus proving Bitcoin related operations using Risc0 zkVM, the
 - **Optimizing Proof Performance:** When using a zkVM system in general, the time/proving cost correlates with total number of execution cycles. Therefore, reducing the number of cycles is of utmost importance. There are a couple of ways to achieve this:
     - Utilizing precompiles implemented by Risc0
     - Executing operations done multiple times in Bitcoin Core, only once
-    - Implementing functionality that is mathematically equivalent to Bitcoin Core behavior, but with less operations/cycless.
+    - Implementing functionality that is mathematically equivalent to Bitcoin Core behavior, but with less operations/cycles.
 
-## Getting Started
-First, install `Risc0` toolchain. You can refer to [here](https://dev.risczero.com/api/zkvm/install). Next, build the guest program by running:
+## Getting Started (For Demonstration Purposes)
+First, install `Risc0` toolchain. You can refer to [here](https://dev.risczero.com/api/zkvm/install). Also install Bitcoin.
+Now, start the regtest server with the following command:
 ```bash
-BITCOIN_NETWORK=<NETWORK_TYPE> REPR_GUEST_BUILD=1 cargo build --release -p bitcoin
+bitcoind -regtest -rpcuser=admin -rpcpassword=admin -rpcport=18443 -fallbackfee=0.00001 -wallet=admin -txindex=1
 ```
-where `NETWORK_TYPE` can be `mainnet`, `testnet4`, `signet`, or `regtest`. Then, build the host program by running:
+Create a wallet:
 ```bash
-BITCOIN_NETWORK=NETWORK_TYPE cargo build --release -p host
+bitcoin-cli -regtest -rpcuser=admin -rpcpassword=admin -rpcport=18443 createwallet "admin"
 ```
-where `NETWORK_TYPE` matches to the one of the previous command. Finally, run:
+Mine some blocks:
 ```bash
-./target/release/host None data/proofs/testnet4/testnet4_first_9.bin 10
+bitcoin-cli -regtest -rpcuser=admin -rpcpassword=admin -rpcport=18443 generatetoaddress 101 $(bitcoin-cli -regtest -rpcuser=admin -rpcpassword=admin -rpcport=18443 getnewaddress)
 ```
-where
-- The first argument is the previous proof file path (`None` if starting from genesis).
-- The second argument is the output proof file path.
-- The third argument is the number of headers to prove.
+Now, to simulate continuous block mining, run:
+```bash
+#!/bin/bash
+while true; do
+  echo "Generating 1 blocks to a new address..."
+  bitcoin-cli -regtest -rpcuser=admin -rpcpassword=admin -rpcport=18443 generatetoaddress 1 $(bitcoin-cli -regtest -rpcuser=admin -rpcpassword=admin -rpcport=18443 getnewaddress)
+  echo "Command executed. Waiting for 30 seconds..."
+  sleep 30
+done
+```
+Now first run (for the server):
+```bash
+BITCOIN_NETWORK=regtest RISC0_DEV_MODE=1 cargo run --package host --bin server
+```
+Wait some time to allow the server to sync. Then, run the client:
 
-### Usage
+```bash
+BITCOIN_NETWORK=regtest RISC0_DEV_MODE=1 cargo run --package host --bin client
+```
+
+## Usage
 - TBD
 
 
